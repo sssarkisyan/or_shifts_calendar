@@ -13,8 +13,8 @@ st.set_page_config(page_title="ОРИТ — Пожелания на смены",
 
 STATUSES = [
     {"code": "CAN", "label": "Могу"},
-    {"code": "CAN_8", "label": "Могу только 8ч"},
-    {"code": "CAN_11", "label": "Могу с 11:00"},
+    {"code": "CAN_8", "label": "Могу только 08:00-16:00"},
+    {"code": "CAN_11", "label": "Могу только 11:00-21:00"},
     {"code": "CANNOT", "label": "Не могу"},
     {"code": "OTHER_JOB", "label": "Работаю в другом месте"},
     {"code": "VACATION", "label": "В отпуске"},
@@ -86,7 +86,14 @@ def build_staff_csv():
 
 st.title("ОРИТ · Пожелания на график смен")
 if BACKEND_NAME == "local_csv":
-    st.caption("⚠️ Локальный режим (нет настроенных Google-secrets) — данные хранятся только в этом окружении, в реальном деплое настройте Google Sheets (см. DEPLOY.md).")
+    st.error(
+        "⚠️ ЛОКАЛЬНЫЙ РЕЖИМ: Google-secrets не обнаружены, данные сохраняются "
+        "только во временный файл этого запуска и НЕ попадают в Google Таблицу. "
+        "Если это задеплоенное приложение — проверьте Secrets в настройках "
+        "приложения на share.streamlit.io и перезапустите его (Reboot app)."
+    )
+else:
+    st.caption("✅ Подключено к Google Таблице.")
 
 tab_me, tab_manager = st.tabs(["Мои пожелания", "Свод по отделению"])
 
@@ -215,7 +222,7 @@ with tab_manager:
             df = pd.DataFrame(table)
             st.dataframe(df, width="stretch", hide_index=True)
             st.caption(
-                "Доступно на день (Могу / Могу только 8ч / Могу с 11:00): "
+                "Доступно на день (Могу / Могу только 08:00-16:00 / Могу только 11:00-21:00): "
                 + ", ".join("%s=%s" % (d[8:10], counts_row[d[8:10]]) for d in dates)
             )
 

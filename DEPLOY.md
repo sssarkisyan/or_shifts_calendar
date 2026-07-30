@@ -39,40 +39,38 @@ Google) — после настройки проверьте её и напиш�
    подходят для Streamlit Community Cloud).
 2. Загрузите туда содержимое папки `streamlit_app/` **кроме**
    `.streamlit/secrets.toml` (такого файла и не должно быть — секреты
-   вводятся отдельно на шаге 5; `.gitignore` уже настроен, чтобы случайно
+   вводятся отдельно на шаге 5 ниже; `.gitignore` уже настроен, чтобы случайно
    его не закоммитить) и кроме `local_data.csv`/`test_app_flow.py` (это
    только для локальной проверки, в репозиторий их брать не обязательно,
    но и не критично, если попадут).
 
-## Шаг 4 — деплой на Streamlit Community Cloud
+## Шаг 4 — сформировать secrets.toml (не переносите поля вручную)
+
+Ручной перенос полей из JSON в TOML — самый частый источник ошибки
+"Invalid format: please enter valid TOML" (в JSON строки заканчиваются
+запятыми, которые в TOML не нужны, а `private_key` — многострочный и легко
+ломается при копировании). Вместо этого запустите скрипт, который сам
+корректно соберёт TOML прямо из скачанного JSON-ключа (шаг 2.4):
+
+```bash
+cd streamlit_app
+python3 -m pip install tomli_w tomli
+python3 make_secrets_toml.py путь/к/скачанному-ключу.json
+```
+
+Скрипт спросит код доступа руководителя и ID таблицы (шаг 1.2), сам
+проверит, что получившийся TOML валиден, запишет его в
+`.streamlit/secrets.toml` (для локальной проверки) и выведет тот же текст
+на экран — просто скопируйте всё, что между линиями `====`, в поле Secrets
+на следующем шаге.
+
+## Шаг 5 — деплой на Streamlit Community Cloud
 
 1. Зайдите на https://share.streamlit.io/ и войдите через GitHub.
 2. **Create app** → выберите репозиторий из шага 3, ветку, и главный файл
    `app.py`.
-3. **Advanced settings → Secrets** — вставьте (замените на свои значения
-   из шагов 1-2):
-   ```toml
-   manager_passcode = "241024"
-
-   [sheet]
-   spreadsheet_id = "ID_ИЗ_ШАГА_1"
-
-   [gcp_service_account]
-   type = "service_account"
-   project_id = "..."
-   private_key_id = "..."
-   private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-   client_email = "orit-bot@ваш-проект.iam.gserviceaccount.com"
-   client_id = "..."
-   auth_uri = "https://accounts.google.com/o/oauth2/auth"
-   token_uri = "https://oauth2.googleapis.com/token"
-   auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-   client_x509_cert_url = "..."
-   ```
-   Все поля, кроме `manager_passcode` и `spreadsheet_id`, просто скопируйте
-   один в один из скачанного JSON-файла (шаг 2.4) — обратите внимание, что
-   `private_key` в JSON уже содержит `\n` внутри строки, скопируйте как есть
-   в кавычках.
+3. **Advanced settings → Secrets** — вставьте текст, который вывел скрипт
+   на шаге 4, целиком, без изменений.
 4. **Deploy**. Через 1-2 минуты откроется ссылка вида
    `https://ваше-приложение.streamlit.app`.
 5. Откройте ссылку, отправьте тестовые пожелания за любого сотрудника,
@@ -103,10 +101,9 @@ python3 -m streamlit run app.py
 Код доступа руководителя в локальном режиме — `devlocal` (см. `config.py`,
 `MANAGER_PASSCODE_FALLBACK`).
 
-С реальной Google Таблицей локально: скопируйте
-`.streamlit/secrets.toml.example` в `.streamlit/secrets.toml`, заполните
-своими значениями (файл не коммитится, см. `.gitignore`) и запустите
-так же.
+С реальной Google Таблицей локально: запустите `make_secrets_toml.py`
+(шаг 4 выше) — он сам создаст `.streamlit/secrets.toml` (файл не
+коммитится, см. `.gitignore`) — и запустите так же.
 
 Автоматическая проверка логики (лимит "Не могу", отправка, вход
 руководителя) без браузера:
