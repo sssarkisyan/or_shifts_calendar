@@ -20,14 +20,23 @@ from backend import BACKEND_NAME, get_submission, list_submissions, upsert_submi
 
 st.set_page_config(page_title=f"Пожелания по графику | {DEPARTMENT_TITLE}", page_icon="🩺", layout="centered")
 
-STATUSES = [
-    {"code": "CAN", "label": "Могу"},
-    {"code": "CAN_8", "label": "Могу только 08:00-16:00"},
-    {"code": "CAN_11", "label": "Могу только 11:00-21:00"},
-    {"code": "CANNOT", "label": "Не могу"},
-    {"code": "OTHER_JOB", "label": "Работаю в другом месте"},
-    {"code": "VACATION", "label": "В отпуске"},
-]
+if DEPARTMENT == "nurses":
+    STATUSES = [
+        {"code": "CAN", "label": "Могу"},
+        {"code": "CAN_11", "label": "Могу только с 11:30"},
+        {"code": "CANNOT", "label": "Не могу"},
+        {"code": "OTHER_JOB", "label": "Работаю в другом месте"},
+        {"code": "VACATION", "label": "В отпуске"},
+    ]
+else:
+    STATUSES = [
+        {"code": "CAN", "label": "Могу"},
+        {"code": "CAN_8", "label": "Могу только 08:00-16:00"},
+        {"code": "CAN_11", "label": "Могу только 11:00-21:00"},
+        {"code": "CANNOT", "label": "Не могу"},
+        {"code": "OTHER_JOB", "label": "Работаю в другом месте"},
+        {"code": "VACATION", "label": "В отпуске"},
+    ]
 CODE_TO_LABEL = {s["code"]: s["label"] for s in STATUSES}
 LABEL_TO_CODE = {s["label"]: s["code"] for s in STATUSES}
 LABELS = [s["label"] for s in STATUSES]
@@ -230,8 +239,9 @@ with tab_manager:
 
             df = pd.DataFrame(table)
             st.dataframe(df, width="stretch", hide_index=True)
+            available_labels = " / ".join(CODE_TO_LABEL[c] for c in AVAILABLE_CODES if c in CODE_TO_LABEL)
             st.caption(
-                "Доступно на день (Могу / Могу только 08:00-16:00 / Могу только 11:00-21:00): "
+                "Доступно на день (%s): " % available_labels
                 + ", ".join("%s=%s" % (d[8:10], counts_row[d[8:10]]) for d in dates)
             )
 
