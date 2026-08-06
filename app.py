@@ -1,15 +1,24 @@
 import calendar as calmod
 import datetime
+import importlib
 import io
 
 import pandas as pd
 import streamlit as st
 
-import config
-from backend import BACKEND_NAME, get_submission, list_submissions, upsert_submission
 from secrets_util import get_secret
 
-st.set_page_config(page_title="ОРИТ — Пожелания на смены", page_icon="🩺", layout="centered")
+# Один код, два деплоя: значение "department" в Secrets конкретного деплоя
+# выбирает ростер/лимиты (config.py — врачи, config_nurses.py — медсёстры).
+# Google-таблица и код доступа тоже свои у каждого деплоя (свои Secrets),
+# этот выбор их не касается.
+DEPARTMENT = get_secret("department", "doctors")
+config = importlib.import_module("config_nurses" if DEPARTMENT == "nurses" else "config")
+DEPARTMENT_TITLE = "Медсёстры-анестезистки" if DEPARTMENT == "nurses" else "ОРИТ"
+
+from backend import BACKEND_NAME, get_submission, list_submissions, upsert_submission
+
+st.set_page_config(page_title=f"{DEPARTMENT_TITLE} — Пожелания на смены", page_icon="🩺", layout="centered")
 
 STATUSES = [
     {"code": "CAN", "label": "Могу"},
@@ -84,7 +93,7 @@ def build_staff_csv():
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-st.title("ОРИТ · Пожелания на график смен")
+st.title(f"{DEPARTMENT_TITLE} · Пожелания на график смен")
 if BACKEND_NAME == "local_csv":
     st.error(
         "⚠️ ЛОКАЛЬНЫЙ РЕЖИМ: Google-secrets не обнаружены, данные сохраняются "
