@@ -14,11 +14,11 @@ from secrets_util import get_secret
 # этот выбор их не касается.
 DEPARTMENT = get_secret("department", "doctors")
 config = importlib.import_module("config_nurses" if DEPARTMENT == "nurses" else "config")
-DEPARTMENT_TITLE = "Медсёстры-анестезистки" if DEPARTMENT == "nurses" else "ОРИТ"
+DEPARTMENT_TITLE = "Медсестры-анестезистки" if DEPARTMENT == "nurses" else "Врачи"
 
 from backend import BACKEND_NAME, get_submission, list_submissions, upsert_submission
 
-st.set_page_config(page_title=f"{DEPARTMENT_TITLE} — Пожелания на смены", page_icon="🩺", layout="centered")
+st.set_page_config(page_title=f"Пожелания по графику | {DEPARTMENT_TITLE}", page_icon="🩺", layout="centered")
 
 STATUSES = [
     {"code": "CAN", "label": "Могу"},
@@ -93,7 +93,7 @@ def build_staff_csv():
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-st.title(f"{DEPARTMENT_TITLE} · Пожелания на график смен")
+st.title(f"Пожелания по графику | {DEPARTMENT_TITLE}")
 if BACKEND_NAME == "local_csv":
     st.error(
         "⚠️ ЛОКАЛЬНЫЙ РЕЖИМ: Google-secrets не обнаружены, данные сохраняются "
