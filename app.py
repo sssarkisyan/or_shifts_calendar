@@ -14,7 +14,7 @@ from secrets_util import get_secret
 # этот выбор их не касается.
 DEPARTMENT = get_secret("department", "doctors")
 config = importlib.import_module("config_nurses" if DEPARTMENT == "nurses" else "config")
-DEPARTMENT_TITLE = "Медсестры-анестезистки" if DEPARTMENT == "nurses" else "Врачи"
+DEPARTMENT_TITLE = "Медсестры" if DEPARTMENT == "nurses" else "Врачи"
 
 from backend import BACKEND_NAME, get_submission, list_submissions, upsert_submission
 
