@@ -31,6 +31,7 @@ if DEPARTMENT == "nurses":
 else:
     STATUSES = [
         {"code": "CAN", "label": "Могу"},
+        {"code": "NO_DUTY", "label": "Не могу дежурить 24ч"},
         {"code": "CAN_8", "label": "Могу только 08:00-16:00"},
         {"code": "CAN_11", "label": "Могу только 11:00-21:00"},
         {"code": "CANNOT", "label": "Не могу"},
@@ -40,7 +41,7 @@ else:
 CODE_TO_LABEL = {s["code"]: s["label"] for s in STATUSES}
 LABEL_TO_CODE = {s["label"]: s["code"] for s in STATUSES}
 LABELS = [s["label"] for s in STATUSES]
-AVAILABLE_CODES = {"CAN", "CAN_8", "CAN_11"}
+AVAILABLE_CODES = {"CAN", "NO_DUTY", "CAN_8", "CAN_11"}
 MONTH_NAMES = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
                "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
 DOW_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
