@@ -2,3 +2,5 @@ streamlit>=1.38
 gspread>=6.1
 google-auth>=2.30
 pandas>=2.0
+holidays>=0.50
+openpyxl>=3.1

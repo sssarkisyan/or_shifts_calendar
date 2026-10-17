@@ -2,3 +2,5 @@
 local_data.csv
 __pycache__/
 *.pyc
+local_vacations.csv
+local_vacation_log.csv
