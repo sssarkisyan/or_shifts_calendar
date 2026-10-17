@@ -200,12 +200,12 @@ def bad_days(records, rules):
     return out
 
 
-def team_calendar(records, rules, exclude_name=None):
-    """{дата: {"approved": [ФИО], "pending": [ФИО]}} — отпуска основных
-    сотрудников (кроме exclude_name) по дням."""
+def team_calendar(records, names, exclude_name=None):
+    """{дата: {"approved": [ФИО], "pending": [ФИО]}} — отпуска сотрудников из
+    names (кроме exclude_name) по дням."""
     out = {}
     for r in active(records):
-        if r["name"] == exclude_name or r["name"] not in rules.main_names:
+        if r["name"] == exclude_name or r["name"] not in names:
             continue
         key = "approved" if r["status"] == APPROVED else "pending"
         for d in daterange(r["start"], r["end"]):
@@ -296,7 +296,7 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
     for r in active(records):
         for d in daterange(r["start"], r["end"]):
             by_day[(r["name"], d)] = r["status"]
-    team = team_calendar(records, rules)
+    team = team_calendar(records, rules.main_names)
     bad = bad_days(records, rules)
     for m in range(1, 13):
         ws = wb.create_sheet(MONTH_NAMES[m - 1])

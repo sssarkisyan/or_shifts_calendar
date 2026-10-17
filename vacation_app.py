@@ -24,6 +24,7 @@ st.set_page_config(page_title="График отпусков | Врачи", page
 
 STAFF = config.STAFF
 NAMES = [s["name"] for s in STAFF]
+KIND = {s["name"]: s["kind"] for s in STAFF}
 # Правила пересечения отпусков основных сотрудников (совместители не ограничены).
 RULES = TeamRules(
     main_names=frozenset(s["name"] for s in STAFF if s["kind"] in vc.OVERLAP_KINDS),
@@ -118,11 +119,20 @@ CALENDAR_CSS = """
 """ % {"p": C_PENDING, "a": C_APPROVED, "f": C_FULL}
 
 
+def visible_colleagues(me):
+    """Чьи отпуска сотрудник видит в календаре — коллеги из его группы CALENDAR_GROUPS."""
+    groups = [g for g in vc.CALENDAR_GROUPS if KIND[me] in g]
+    if not groups:  # совместители/договорники — видят основных врачей
+        return set(RULES.main_names) - {me}
+    kinds = set().union(*groups)
+    return {n for n, k in KIND.items() if k in kinds and n != me}
+
+
 def year_calendar_html(year, records, me, rules):
-    """12 мини-календарей: отпуска других основных врачей по дням (подано /
+    """12 мини-календарей: отпуска коллег из группы сотрудника по дням (подано /
     одобрено / дни недоступны), свои периоды обведены. Подсказка при наведении —
     кто именно."""
-    team = team_calendar(records, rules, exclude_name=me)
+    team = team_calendar(records, visible_colleagues(me), exclude_name=me)
     mine = {d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])}
     is_main = me in rules.main_names
     parts = [CALENDAR_CSS, '<div class="vc-legend">',
@@ -447,7 +457,7 @@ with tab_manager:
               for d in dates] for nm in NAMES],
             index=NAMES, columns=cols,
         )
-        team = team_calendar(records, RULES)
+        team = team_calendar(records, RULES.main_names)
         bad = bad_days(records, RULES)
         ROW_APPR, ROW_PEND = "Основных: одобрено", "Основных: подано"
         cal.loc[ROW_APPR] = [str(len(team.get(d, {}).get("approved", [])) or "") for d in dates]

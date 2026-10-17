@@ -237,6 +237,21 @@ check(not at.error or all("ЛОКАЛЬНЫЙ" in e.value for e in at.error), "�
 as_employee(part_timer)
 check('class="vc-full' not in calendar_html(), "у совместителя недоступных дней нет")
 
+# заведующий и профессор видят заявки друг друга; основные их не видят, лимиты не задеты
+prof = [x["name"] for x in config.STAFF if x["kind"] == "профессор"][0]
+head = [x["name"] for x in config.STAFF if x["kind"] == "заведующий"][0]
+backend.add_vacation(rec(prof, D(Y, 3, 1), D(Y, 3, 14)))
+refresh()
+as_employee(head)
+check(prof in calendar_html() and 'class="vc-p' in calendar_html(), "заведующий видит заявку профессора")
+check(me not in calendar_html(), "заведующий не видит отпуска основных врачей")
+as_employee(me)
+check(prof not in calendar_html(), "основной врач не видит заявку профессора")
+pick(D(Y, 3, 1), D(Y, 3, 14))
+check(not any("поданы заявки" in w.value for w in at.warning), "отпуск профессора не создаёт конфликтов для основных")
+as_employee(part_timer)
+check(me in calendar_html(), "совместитель по-прежнему видит отпуска основных")
+
 # нарушение среди одобренных видно руководителю
 backend.add_vacation(rec(colleague4, D(Y, 7, 5), D(Y, 7, 6), APPROVED))
 refresh()
