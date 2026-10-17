@@ -97,7 +97,7 @@ def submissions_locked():
 
 
 # Бледно-розовый — подано, бледно-зелёный — одобрено (те же цвета в Excel).
-C_PENDING, C_APPROVED, C_FULL = "#F9D5DC", "#CDEBD3", "#BDBDBD"
+C_PENDING, C_APPROVED, C_FULL, C_BAD = "#F9D5DC", "#CDEBD3", "#BDBDBD", "#FF7C80"
 
 CALENDAR_CSS = """
 <style>
@@ -112,11 +112,12 @@ CALENDAR_CSS = """
 .vc-a{background:%(a)s;color:#222}
 .vc-pa{background:linear-gradient(135deg,%(a)s 50%%,%(p)s 50%%);color:#222}
 .vc-full{background:%(f)s;color:#555;text-decoration:line-through}
+.vc-bad{background:%(b)s;color:#222;font-weight:700}
 .vc-mine{box-shadow:inset 0 0 0 2px #2F6FDE;font-weight:700}
 .vc-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin-bottom:6px}
 .vc-legend span.sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:5px}
 </style>
-""" % {"p": C_PENDING, "a": C_APPROVED, "f": C_FULL}
+""" % {"p": C_PENDING, "a": C_APPROVED, "f": C_FULL, "b": C_BAD}
 
 
 def visible_colleagues(me):
@@ -128,21 +129,21 @@ def visible_colleagues(me):
     return {n for n, k in KIND.items() if k in kinds and n != me}
 
 
-def year_calendar_html(year, records, me, rules):
-    """12 мини-календарей: отпуска коллег из группы сотрудника по дням (подано /
-    одобрено / дни недоступны), свои периоды обведены. Подсказка при наведении —
-    кто именно."""
-    team = team_calendar(records, visible_colleagues(me), exclude_name=me)
-    mine = {d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])}
-    is_main = me in rules.main_names
-    parts = [CALENDAR_CSS, '<div class="vc-legend">',
-             '<span><span class="sw" style="background:%s"></span>подана заявка</span>' % C_PENDING,
-             '<span><span class="sw" style="background:%s"></span>одобрено</span>' % C_APPROVED]
-    if is_main:
-        parts.append('<span><span class="sw" style="background:%s"></span>недоступно (одобрено %d врачам)</span>'
-                     % (C_FULL, rules.max_concurrent))
-    parts.append('<span><span class="sw" style="box-shadow:inset 0 0 0 2px #2F6FDE"></span>мои периоды</span>'
-                 '</div><div class="vc-grid">')
+def year_calendar_html(year, team, full=(), bad=(), mine=(), show_full=False, show_bad=False, show_mine=False,
+                       label=lambda n: n):
+    """12 мини-календарей. team — {дата: {"approved": [..], "pending": [..]}};
+    full — дни, закрытые для основных (серые), bad — нарушения среди одобренных
+    (красные), mine — свои периоды (обведены). Подсказка при наведении — кто."""
+    legend = [('background:%s' % C_PENDING, "подана заявка"), ('background:%s' % C_APPROVED, "одобрено")]
+    if show_full:
+        legend.append(('background:%s' % C_FULL, "недоступно для основных (одобрено %d врачам)" % vc.MAX_CONCURRENT_MAIN))
+    if show_bad:
+        legend.append(('background:%s' % C_BAD, "нарушение среди одобренных"))
+    if show_mine:
+        legend.append(("box-shadow:inset 0 0 0 2px #2F6FDE", "мои периоды"))
+    parts = [CALENDAR_CSS, '<div class="vc-legend">']
+    parts += ['<span><span class="sw" style="%s"></span>%s</span>' % (style, text) for style, text in legend]
+    parts.append('</div><div class="vc-grid">')
     for m in range(1, 13):
         parts.append('<div class="vc-month"><h4>%s</h4><table><tr>%s</tr>'
                      % (MONTH_NAMES[m - 1], "".join("<th>%s</th>" % d for d in DOW_RU)))
@@ -154,7 +155,9 @@ def year_calendar_html(year, records, me, rules):
                     continue
                 info = team.get(d, {"approved": [], "pending": []})
                 cls = []
-                if is_main and len(info["approved"]) >= rules.max_concurrent:
+                if d in bad:
+                    cls.append("vc-bad")
+                elif d in full:
                     cls.append("vc-full")
                 elif info["approved"] and info["pending"]:
                     cls.append("vc-pa")
@@ -170,14 +173,40 @@ def year_calendar_html(year, records, me, rules):
                     cls.append("vc-mine")
                 tip = [d.strftime("%d.%m")]
                 if info["approved"]:
-                    tip.append("одобрено: " + ", ".join(info["approved"]))
+                    tip.append("одобрено: " + ", ".join(map(label, info["approved"])))
                 if info["pending"]:
-                    tip.append("подано: " + ", ".join(info["pending"]))
+                    tip.append("подано: " + ", ".join(map(label, info["pending"])))
                 parts.append('<td class="%s" title="%s">%d</td>' % (" ".join(cls), html.escape("\n".join(tip)), d.day))
             parts.append("</tr>")
         parts.append("</table></div>")
     parts.append("</div>")
     return "".join(parts)
+
+
+def closed_days(records, exclude_name=None):
+    """Дни, где отпуск уже одобрен MAX_CONCURRENT_MAIN основным (кроме exclude_name)."""
+    main = team_calendar(records, RULES.main_names, exclude_name=exclude_name)
+    return {d for d, info in main.items() if len(info["approved"]) >= RULES.max_concurrent}
+
+
+def employee_calendar_html(year, records, me):
+    """Календарь сотрудника: коллеги из его группы CALENDAR_GROUPS, свои периоды."""
+    is_main = me in RULES.main_names
+    return year_calendar_html(
+        year, team_calendar(records, visible_colleagues(me), exclude_name=me),
+        full=closed_days(records, exclude_name=me) if is_main else (),
+        mine={d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])},
+        show_full=is_main, show_mine=True,
+    )
+
+
+def manager_calendar_html(year, records):
+    """Календарь руководителя: отпуска всех сотрудников, закрытые дни и нарушения."""
+    return year_calendar_html(
+        year, team_calendar(records, set(NAMES)),
+        full=closed_days(records), bad=bad_days(records, RULES), show_full=True, show_bad=True,
+        label=lambda n: n if n in RULES.main_names else "%s (%s)" % (n, KIND.get(n, "?")),
+    )
 
 
 st.title("График отпусков | Врачи")
@@ -267,7 +296,7 @@ with tab_me:
                        % (vc.MAX_CONCURRENT_MAIN, vc.MAX_OVERLAP_DAYS))
         else:
             st.caption("Ограничения на пересечение с отпусками коллег на вас не распространяются.")
-        st.html(year_calendar_html(year, records, name, RULES))
+        st.html(employee_calendar_html(year, records, name))
 
         form_n = st.session_state.get("form_n", 0)
         picked = st.date_input(
@@ -442,7 +471,11 @@ with tab_manager:
                     hide_index=True, width="stretch")
 
         # --- Календарь ---
-        st.subheader("Календарь")
+        st.subheader("Календарь на год")
+        st.html(manager_calendar_html(m_year, records))
+        st.caption("Наведите на день — видно, кто в отпуске. Ниже — тот же месяц по сотрудникам.")
+
+        st.subheader("По сотрудникам")
         cal_month = st.selectbox("Месяц", list(range(1, 13)), format_func=lambda i: MONTH_NAMES[i - 1], key="mgr_cal_month")
         n = calmod.monthrange(m_year, cal_month)[1]
         dates = [datetime.date(m_year, cal_month, d) for d in range(1, n + 1)]

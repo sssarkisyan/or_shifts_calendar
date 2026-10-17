@@ -257,6 +257,12 @@ backend.add_vacation(rec(colleague4, D(Y, 7, 5), D(Y, 7, 6), APPROVED))
 refresh()
 check(any("ОДОБРЕННЫХ" in e.value and "05.07–06.07" in e.value for e in at.error),
       "руководитель видит 3 одобренных основных 5–6 июля")
+htmls = at.get("html")
+check(len(htmls) == 2, "календарь есть и у сотрудника, и в своде")
+mgr_html = htmls[1].proto.body
+check('class="vc-bad' in mgr_html, "календарь свода: нарушение среди одобренных — красным")
+check('class="vc-full' in mgr_html, "календарь свода: закрытые для основных дни — серым")
+check(prof + " (профессор)" in mgr_html and me in mgr_html, "календарь свода: видны все сотрудники, с типом у неосновных")
 
 # правка в таблице согласования → только изменённые строки уходят в сохранение
 import pandas as pd
