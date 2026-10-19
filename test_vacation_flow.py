@@ -269,6 +269,8 @@ backend.add_vacation(rec(prof, D(Y, 3, 1), D(Y, 3, 14)))
 refresh()
 as_employee(head)
 check(prof in calendar_html() and '"vc-p1' in calendar_html(), "заведующий видит заявку профессора")
+check([l[1] for l in json.loads(calendar_html())["legend"]] == ["мои отпуска", "заявка коллеги подана", "отпуск коллеги одобрен"],
+      "легенда заведующего (один коллега) — без уровней плотности")
 check(me not in calendar_html(), "заведующий не видит отпуска основных врачей")
 as_employee(me)
 check(prof not in calendar_html(), "основной врач не видит заявку профессора")

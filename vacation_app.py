@@ -166,15 +166,19 @@ DENSITY_PENDING = ["#FBE3E8", "#F5B9C6", "#EC8CA2"]
 DENSITY_APPROVED = ["#E0F2E5", "#B5DFC0", "#7FC492"]
 
 
-def legend(full=False, bad=False, mine=False, colleagues=True, others=True):
-    """[[стиль или список стилей образцов, текст], ...]; others=False — чужих
-    отпусков в календаре нет, легенда только про свои."""
+def legend(full=False, bad=False, mine=False, colleagues=True, others=None):
+    """[[стиль или список стилей образцов, текст], ...]. others — сколько чужих
+    сотрудников видно в календаре: 0 — легенда только про свои отпуска, 1 —
+    без уровней плотности (больше одного коллеги в день не бывает), None — много."""
     who = "коллег" if colleagues else "сотрудников"
     items = []
     if mine:
         items.append(["box-shadow:inset 0 0 0 2px #2F6FDE", "мои отпуска"])
-    if not others:
+    if others == 0:
         return items
+    if others == 1:
+        return items + [["background:%s" % DENSITY_PENDING[0], "заявка коллеги подана"],
+                        ["background:%s" % DENSITY_APPROVED[0], "отпуск коллеги одобрен"]]
     items += [[["background:%s" % c for c in DENSITY_PENDING], "1 · 2 · 3+ %s, есть поданные заявки" % who],
               [["background:%s" % c for c in DENSITY_APPROVED], "1 · 2 · 3+ %s, всё одобрено" % who]]
     if full:
@@ -201,7 +205,7 @@ def employee_calendar_args(year, records, me, selected):
         year, [r for r in active(records) if r["name"] in colleagues], full=full,
         mine={d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])})
     return dict(year=year, selectable=True, selected=selected, blocked=sorted(d.isoformat() for d in full),
-                days=days, reqs=reqs, legend=legend(full=is_main, mine=True, others=bool(colleagues)))
+                days=days, reqs=reqs, legend=legend(full=is_main, mine=True, others=len(colleagues)))
 
 
 def manager_calendar_args(year, records):
