@@ -8,8 +8,10 @@
   Кликабельный годовой календарь — компонент Streamlit без сборки (см.
   vacation_app.py → vacation_calendar). Протокол обмена со Streamlit —
   postMessage: componentReady / render / setComponentValue / setFrameHeight.
-  Аргументы: year, days {iso: {c: классы, t: подсказка}}, blocked [iso],
-  selected {start, end}, selectable, legend [[стиль, текст]].
+  Аргументы: year, days {iso: {c: классы, t: подсказка, b: полоски}},
+  blocked [iso], selected {start, end}, selectable, legend [[стиль, текст]],
+  bar_colors {p, a}. Полоска — [дорожка, "a"|"p", начало?, конец?]: каждая
+  заявка коллеги рисуется своей полоской под числом (как в Google Календаре).
   Значение: {start, end, n} — n растёт с каждым кликом, чтобы повторный
   выбор тех же дат тоже доходил до Streamlit.
 -->
@@ -21,15 +23,18 @@
   .vc-month h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
   .vc-month table { border-collapse: separate; border-spacing: 2px; width: 100%; font-size: 12px; }
   .vc-month th { font-weight: 500; opacity: .6; text-align: center; padding: 0; }
-  .vc-month td { text-align: center; height: 26px; border-radius: 4px; padding: 0; cursor: default; user-select: none; }
+  .vc-month td { text-align: center; vertical-align: top; height: 24px; border-radius: 4px; padding: 3px 0 0;
+                 cursor: default; user-select: none; }
+  .vc-bars { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; padding-bottom: 3px; }
+  .vc-bar { height: 4px; margin: 0 -1px; }
+  .vc-bar.s { margin-left: 3px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
+  .vc-bar.e { margin-right: 3px; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+  .vc-more { font-size: 9px; line-height: 9px; opacity: .7; }
   .vc-click td.vc-day { cursor: pointer; }
   .vc-click td.vc-day:hover { box-shadow: inset 0 0 0 2px var(--sel); }
   .vc-click td.vc-blocked { cursor: not-allowed; }
   .vc-wk { color: #C0392B; }
   .vc-hol { color: #D35400; font-weight: 700; }
-  .vc-p { background: #F9D5DC; color: #222; }
-  .vc-a { background: #CDEBD3; color: #222; }
-  .vc-pa { background: linear-gradient(135deg, #CDEBD3 50%, #F9D5DC 50%); color: #222; }
   .vc-full { background: #BDBDBD; color: #555; text-decoration: line-through; }
   .vc-bad { background: #FF7C80; color: #222; font-weight: 700; }
   .vc-mine { box-shadow: inset 0 0 0 2px var(--sel); font-weight: 700; }
@@ -46,6 +51,7 @@
   var MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
                 "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
   var DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  var MAX_LANES = 4;  // больше полосок в ячейку не помещается — остальное «+N»
   var args = null, sel = { start: null, end: null }, hover = null, clicks = 0;
   var root = document.getElementById("root");
 
@@ -67,8 +73,25 @@
   }
   function isEnd(day) { return day === sel.start || day === sel.end; }
 
+  function bars(list, lanes, colors) {
+    if (!lanes) return "";
+    var byLane = {}, more = 0;
+    list.forEach(function (b) { if (b[0] < lanes) byLane[b[0]] = b; else more += 1; });
+    var h = ['<div class="vc-bars">'];
+    for (var i = 0; i < lanes; i++) {
+      var b = byLane[i];
+      if (i === lanes - 1 && more) { h.push('<div class="vc-more">+' + (more + (b ? 1 : 0)) + "</div>"); break; }
+      h.push(b ? '<div class="vc-bar' + (b[2] ? " s" : "") + (b[3] ? " e" : "") + '" style="background:'
+                 + colors[b[1]] + '"></div>'
+               : '<div class="vc-bar" style="visibility:hidden"></div>');
+    }
+    h.push("</div>");
+    return h.join("");
+  }
+
   function render() {
     if (!args) return;
+    var colors = args.bar_colors || { p: "#E9899D", a: "#5DB075" };
     var blocked = {};
     (args.blocked || []).forEach(function (d) { blocked[d] = true; });
     var h = [];
@@ -83,19 +106,38 @@
     for (var m = 0; m < 12; m++) {
       h.push('<div class="vc-month"><h4>' + MONTHS[m] + "</h4><table><tr>");
       DOW.forEach(function (d) { h.push("<th>" + d + "</th>"); });
-      h.push("</tr><tr>");
+      h.push("</tr>");
       var first = (new Date(args.year, m, 1).getDay() + 6) % 7;  // Пн = 0
       var n = new Date(args.year, m + 1, 0).getDate();
-      for (var i = 0; i < first; i++) h.push("<td></td>");
-      for (var d = 1; d <= n; d++) {
-        var key = iso(args.year, m, d), info = (args.days || {})[key] || {};
-        var cls = ["vc-day"].concat(info.c ? [info.c] : []);
-        if (blocked[key]) cls.push("vc-blocked");
-        if (args.selectable && inSelection(key)) cls.push(isEnd(key) ? "vc-end" : "vc-range");
-        h.push('<td class="' + cls.join(" ") + '" data-d="' + key + '" title="' + esc(info.t || "") + '">' + d + "</td>");
-        if ((first + d) % 7 === 0 && d < n) h.push("</tr><tr>");
+      var cells = [];
+      for (var i = 0; i < first; i++) cells.push(null);
+      for (var d = 1; d <= n; d++) cells.push(d);
+      for (var w = 0; w < cells.length; w += 7) {
+        var week = cells.slice(w, w + 7), infos = week.map(function (d) {
+          return d ? ((args.days || {})[iso(args.year, m, d)] || {}) : {};
+        });
+        // Полоски нумеруются по неделе: только дорожки, которые есть в этой
+        // неделе, в том же порядке — неделя без заявок остаётся компактной.
+        var used = {};
+        infos.forEach(function (info) { (info.b || []).forEach(function (b) { used[b[0]] = true; }); });
+        var order = Object.keys(used).map(Number).sort(function (a, b) { return a - b; }), rank = {};
+        order.forEach(function (lane, i) { rank[lane] = i; });
+        var rowLanes = Math.min(order.length, MAX_LANES);
+        h.push("<tr>");
+        week.forEach(function (d, i) {
+          if (!d) { h.push("<td></td>"); return; }
+          var key = iso(args.year, m, d), info = infos[i];
+          var cls = ["vc-day"].concat(info.c ? [info.c] : []);
+          if (blocked[key]) cls.push("vc-blocked");
+          if (args.selectable && inSelection(key)) cls.push(isEnd(key) ? "vc-end" : "vc-range");
+          var list = (info.b || []).map(function (b) { return [rank[b[0]], b[1], b[2], b[3]]; });
+          h.push('<td class="' + cls.join(" ") + '" data-d="' + key + '" title="' + esc(info.t || "") + '">' + d
+                 + bars(list, rowLanes, colors) + "</td>");
+        });
+        for (var k = week.length; k < 7; k++) h.push("<td></td>");
+        h.push("</tr>");
       }
-      h.push("</tr></table></div>");
+      h.push("</table></div>");
     }
     h.push("</div>");
     root.innerHTML = h.join("");

@@ -18,7 +18,7 @@ from vacation_backend import BACKEND_NAME, backend, new_log, new_record
 from vacation_logic import (
     APPROVED, DOW_RU, MONTH_NAMES, PENDING, REJECTED, STATUS_LABELS, TeamRules,
     active, approved, approved_violations, bad_days, build_excel, collapse_dates, daterange, editor_updates,
-    fmt_date, fmt_date_words, fmt_period, fmt_period_words, fmt_ranges, is_holiday, n_days, n_doctors, person_summary, record_conflicts, team_calendar,
+    assign_lanes, fmt_date, fmt_date_words, fmt_period, fmt_period_words, fmt_ranges, is_holiday, n_days, n_doctors, person_summary, record_conflicts, team_calendar,
     team_conflicts, vacation_days, validate_new_period,
 )
 
@@ -106,6 +106,8 @@ vacation_calendar = components.declare_component(
 
 # Бледно-розовый — подано, бледно-зелёный — одобрено (те же цвета в Excel).
 C_PENDING, C_APPROVED, C_FULL, C_BAD = "#F9D5DC", "#CDEBD3", "#BDBDBD", "#FF7C80"
+# Полоски заявок в календаре — насыщеннее, чтобы их было видно на белом фоне.
+C_PENDING_BAR, C_APPROVED_BAR = "#E9899D", "#5DB075"
 
 
 def visible_colleagues(me):
@@ -117,38 +119,39 @@ def visible_colleagues(me):
     return {n for n, k in KIND.items() if k in kinds and n != me}
 
 
-def calendar_days(year, team, full=(), bad=(), mine=(), label=lambda n: n):
-    """{iso: {"c": CSS-классы, "t": подсказка}} для компонента календаря.
-    team — {дата: {"approved": [..], "pending": [..]}}; full — дни, закрытые
-    для основных (серые), bad — нарушения среди одобренных (красные), mine —
-    свои отпуска (обведены)."""
+def calendar_days(year, recs, full=(), bad=(), mine=(), label=lambda n: n):
+    """{iso: {"c": CSS-классы, "t": подсказка, "b": полоски}} для компонента
+    календаря. recs — активные заявки коллег, которые надо показать: каждая
+    рисуется своей полоской ("b": [дорожка, "a"|"p", начало?, конец?]) — видно,
+    где чья заявка и сколько их пересекается. full — дни, закрытые для
+    основных (серые), bad — нарушения среди одобренных (красные), mine — свои
+    отпуска (обведены)."""
+    lanes = assign_lanes(recs)
+    by_day = {}
+    for r in recs:
+        for d in daterange(max(r["start"], datetime.date(year, 1, 1)), min(r["end"], datetime.date(year, 12, 31))):
+            by_day.setdefault(d, []).append(r)
     out = {}
     for d in daterange(datetime.date(year, 1, 1), datetime.date(year, 12, 31)):
-        info = team.get(d, {"approved": [], "pending": []})
+        day_recs = sorted(by_day.get(d, []), key=lambda r: lanes[r["id"]])
         cls = []
         if d in bad:
             cls.append("vc-bad")
         elif d in full:
             cls.append("vc-full")
-        elif info["approved"] and info["pending"]:
-            cls.append("vc-pa")
-        elif info["approved"]:
-            cls.append("vc-a")
-        elif info["pending"]:
-            cls.append("vc-p")
         if is_holiday(d):
             cls.append("vc-hol")
         elif d.weekday() >= 5:
             cls.append("vc-wk")
         if d in mine:
             cls.append("vc-mine")
-        tip = []
-        if info["approved"]:
-            tip.append("одобрено: " + ", ".join(map(label, info["approved"])))
-        if info["pending"]:
-            tip.append("подано: " + ", ".join(map(label, info["pending"])))
+        tip = ["%s — %s (%s)" % (label(r["name"]), "одобрено" if r["status"] == APPROVED else "подана заявка",
+                                 fmt_period(r["start"], r["end"])) for r in day_recs]
+        bars = [[lanes[r["id"]], "a" if r["status"] == APPROVED else "p", r["start"] == d, r["end"] == d]
+                for r in day_recs]
         if cls or tip:
-            out[d.isoformat()] = {"c": " ".join(cls), "t": "\n".join([fmt_date_words(d)] + tip) if tip else ""}
+            out[d.isoformat()] = {"c": " ".join(cls), "t": "\n".join([fmt_date_words(d)] + tip) if tip else "",
+                                  "b": bars}
     return out
 
 
@@ -157,14 +160,19 @@ def to_n_doctors(n):
     return "%d %s" % (n, "основному врачу" if n % 10 == 1 and n % 100 != 11 else "основным врачам")
 
 
-def legend(full=False, bad=False, mine=False):
-    items = [["background:%s" % C_PENDING, "подана заявка"], ["background:%s" % C_APPROVED, "одобрено"]]
+BAR = "display:inline-block;width:22px;height:5px;border-radius:3px;vertical-align:3px;margin-right:5px;background:%s"
+
+
+def legend(full=False, bad=False, mine=False, colleagues=True):
+    items = []
+    if mine:
+        items.append(["box-shadow:inset 0 0 0 2px #2F6FDE", "мои отпуска"])
+    who = "заявка коллеги" if colleagues else "заявка"
+    items += [[BAR % C_PENDING_BAR, who + " подана"], [BAR % C_APPROVED_BAR, who + " одобрена"]]
     if full:
         items.append(["background:%s" % C_FULL, "недоступно (одобрено %s)" % to_n_doctors(vc.MAX_CONCURRENT_MAIN)])
     if bad:
         items.append(["background:%s" % C_BAD, "нарушение среди одобренных"])
-    if mine:
-        items.append(["box-shadow:inset 0 0 0 2px #2F6FDE", "мои отпуска"])
     return items
 
 
@@ -182,9 +190,10 @@ def employee_calendar_args(year, records, me, selected):
     full = closed_days(records, exclude_name=me) if is_main else set()
     return dict(
         year=year, selectable=True, selected=selected, blocked=sorted(d.isoformat() for d in full),
-        days=calendar_days(year, team_calendar(records, visible_colleagues(me), exclude_name=me), full=full,
+        days=calendar_days(year, [r for r in active(records) if r["name"] in visible_colleagues(me)], full=full,
                            mine={d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])}),
         legend=legend(full=is_main, mine=True),
+        bar_colors={"p": C_PENDING_BAR, "a": C_APPROVED_BAR},
     )
 
 
@@ -192,10 +201,11 @@ def manager_calendar_args(year, records):
     """Календарь руководителя (только просмотр): все сотрудники, закрытые дни, нарушения."""
     return dict(
         year=year, selectable=False, selected=None, blocked=[],
-        days=calendar_days(year, team_calendar(records, set(NAMES)), full=closed_days(records),
+        days=calendar_days(year, active(records), full=closed_days(records),
                            bad=bad_days(records, RULES),
                            label=lambda n: n if n in RULES.main_names else "%s (%s)" % (n, KIND.get(n, "?"))),
-        legend=legend(full=True, bad=True),
+        legend=legend(full=True, bad=True, colleagues=False),
+        bar_colors={"p": C_PENDING_BAR, "a": C_APPROVED_BAR},
     )
 
 
@@ -300,8 +310,8 @@ with tab_me:
         start = datetime.date.fromisoformat(sel["start"]) if sel.get("start") else None
         end = datetime.date.fromisoformat(sel["end"]) if sel.get("end") else None
 
-        st.caption("Кликните в календаре первый, затем последний день отпуска. "
-                   "Наведите на день — видно, кто из коллег в отпуске.")
+        st.caption("Кликните в календаре на первый, а затем на последний день отпуска. "
+                   "Наведение курсора на конкретный день — покажет, кто из коллег в отпуске.")
         vacation_calendar(
             **employee_calendar_args(year, records, name, {"start": sel.get("start"), "end": sel.get("end")}),
             key=cal_key, default=None,

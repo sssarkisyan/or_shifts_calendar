@@ -18,7 +18,7 @@ import vacation_config as vc
 from secrets_util import get_secret
 import streamlit as st_lib
 from vacation_backend import BACKEND_NAME, LOCAL_FILE, LOCAL_LOG_FILE, backend, new_record
-from vacation_logic import (APPROVED, PENDING, REJECTED, TeamRules, build_excel, editor_updates, vacation_days,
+from vacation_logic import (APPROVED, PENDING, REJECTED, TeamRules, assign_lanes, build_excel, editor_updates, vacation_days,
                             validate_new_period)
 
 assert BACKEND_NAME == "local_csv"
@@ -90,6 +90,13 @@ check(any("Пересекается" in e for e in validate(me, D(Y, 3, 5), D(Y,
 check(validate(me, D(Y, 3, 5), D(Y, 3, 20), [rec(me, D(Y, 3, 1), D(Y, 3, 10), REJECTED)]) == [],
       "отклонённый период не мешает")
 check(any("%d году" % Y in e for e in validate(me, D(Y, 12, 25), D(Y + 1, 1, 10), [])), "период через Новый год — блок")
+
+# --- дорожки: каждая заявка — своя полоска, пересекающиеся — на разных ---
+lane_recs = [rec(colleague, D(Y, 7, 1), D(Y, 7, 14)), rec(colleague2, D(Y, 7, 8), D(Y, 7, 21)),
+             rec(colleague3, D(Y, 7, 15), D(Y, 7, 30)), rec(colleague4, D(Y, 7, 10), D(Y, 7, 12))]
+lanes = assign_lanes(lane_recs)
+check([lanes[r["id"]] for r in lane_recs] == [0, 1, 0, 2],
+      "дорожки: пересекающиеся — разные, освободившаяся переиспользуется")
 
 # --- поданные (не рассмотренные) заявки коллег НЕ блокируют, только предупреждают ---
 crowd = [rec(colleague, D(Y, 7, 1), D(Y, 7, 14)), rec(colleague2, D(Y, 7, 1), D(Y, 7, 14))]
@@ -202,7 +209,14 @@ check(any("История действий" in e.label for e in at.expander), "�
 # коллега подаёт те же даты — можно, с предупреждением
 as_employee(colleague)
 html_text = calendar_html()
-check('"c": "vc-p' in html_text and me in html_text, "календарь: заявка коллеги видна бледно-розовым, с фамилией")
+cal_days = json.loads(html_text)["days"]
+check(cal_days[D(Y, 7, 1).isoformat()]["b"] == [[0, "p", True, False]] and me in cal_days[D(Y, 7, 1).isoformat()]["t"],
+      "календарь: заявка коллеги — розовая полоска с началом 1 июля, в подсказке фамилия")
+check(cal_days[D(Y, 7, 14).isoformat()]["b"] == [[0, "p", False, True]], "полоска заканчивается 14 июля")
+legend_texts = [l[1] for l in json.loads(html_text)["legend"]]
+check(legend_texts[:3] == ["мои отпуска", "заявка коллеги подана", "заявка коллеги одобрена"]
+      and legend_texts[3].startswith("недоступно"), "порядок легенды: мои, подана, одобрена, недоступно")
+check(any("Наведение курсора на конкретный день — покажет" in c.value for c in at.caption), "новый текст подсказки")
 pick(D(Y, 7, 1), D(Y, 7, 14))
 confirm()
 check(any(me in w.value for w in at.warning) and not submit_btn().disabled,
@@ -255,7 +269,7 @@ head = [x["name"] for x in config.STAFF if x["kind"] == "заведующий"][
 backend.add_vacation(rec(prof, D(Y, 3, 1), D(Y, 3, 14)))
 refresh()
 as_employee(head)
-check(prof in calendar_html() and '"c": "vc-p' in calendar_html(), "заведующий видит заявку профессора")
+check(prof in calendar_html() and '"p", true' in calendar_html(), "заведующий видит заявку профессора")
 check(me not in calendar_html(), "заведующий не видит отпуска основных врачей")
 as_employee(me)
 check(prof not in calendar_html(), "основной врач не видит заявку профессора")
