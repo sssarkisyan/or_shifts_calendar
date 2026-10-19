@@ -236,7 +236,7 @@ st_by_name = {r["name"]: r["status"] for r in backend.list_vacations(Y)}
 check(st_by_name[colleague3] == APPROVED and st_by_name[me] == PENDING and st_by_name[colleague] == PENDING,
       "одобрена только бесконфликтная, спорные остались на рассмотрении")
 check(log_actions(colleague3) == ["Статус: Одобрено"], "журнал: одобрение записано")
-check([e["device"] for e in backend.list_log(Y) if e["name"] == colleague3] == ["руководитель"], "журнал: кто — руководитель")
+check([e["device"] for e in backend.list_log(Y) if e["name"] == colleague3] == ["заведующий"], "журнал: кто — руководитель")
 check(any("Журнал действий" in e.label for e in at.expander), "руководитель видит журнал")
 
 # руководитель одобряет «меня», коллегу — отклоняет
@@ -306,14 +306,14 @@ check(not [t for t in texts if "период" in t.lower()], "нигде нет 
 
 # правка в таблице согласования → только изменённые строки уходят в сохранение
 import pandas as pd
-orig = pd.DataFrame({"Статус": ["Одобрено", "Одобрено"], "Комментарий руководителя": ["", ""]}, index=["a", "b"])
+orig = pd.DataFrame({"Статус": ["Одобрено", "Одобрено"], "Комментарий заведующего": ["", ""]}, index=["a", "b"])
 edit = orig.copy()
 edit.at["b", "Статус"] = "Отклонено"
-edit.at["b", "Комментарий руководителя"] = "пересекается"
+edit.at["b", "Комментарий заведующего"] = "пересекается"
 check(editor_updates(orig, edit) == {"b": {"status": REJECTED, "manager_comment": "пересекается"}},
       "изменения из таблицы согласования определяются верно")
 edit2 = orig.copy()
-edit2.at["a", "Комментарий руководителя"] = None
+edit2.at["a", "Комментарий заведующего"] = None
 check(editor_updates(orig, edit2) == {}, "очищенная пустая ячейка не считается изменением")
 
 # --- Excel ---

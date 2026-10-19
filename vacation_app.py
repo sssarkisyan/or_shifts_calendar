@@ -262,7 +262,7 @@ with tab_me:
             if r["comment"]:
                 c1.caption("Ваш комментарий: " + r["comment"])
             if r["manager_comment"]:
-                c1.caption("Комментарий руководителя: " + r["manager_comment"])
+                c1.caption("Комментарий заведующего: " + r["manager_comment"])
             if r["status"] == PENDING:
                 others_appr = [o for o in approved(records) if o["name"] != name]
                 hard = team_conflicts(name, r["start"], r["end"], others_appr, RULES)
@@ -270,7 +270,7 @@ with tab_me:
                 for c in hard:
                     c1.warning("Уже одобрено коллегам: %s. Руководитель, скорее всего, попросит перенести даты." % c)
                 for c in soft:
-                    c1.caption("⚠️ Совпадает с заявками коллег: %s — решит руководитель." % c)
+                    c1.caption("⚠️ Совпадает с заявками коллег: %s — решит заведующий." % c)
             if r["status"] == PENDING and not locked:
                 with c2.popover("Удалить"):
                     st.write("Удалить заявку **%s** (%s)?" % (fmt_period(r["start"], r["end"]), name))
@@ -281,12 +281,12 @@ with tab_me:
                         flash("success", "Отпуск %s удалён." % fmt_period(r["start"], r["end"]))
                         st.rerun()
     if any(r["status"] != PENDING for r in mine):
-        st.caption("Одобренный или отклонённый отпуск изменить самостоятельно нельзя — обратитесь к руководителю.")
+        st.caption("Одобренный или отклонённый отпуск изменить самостоятельно нельзя — обратитесь к заведующему.")
 
     my_log = sorted((e for e in load_log(year) if e["name"] == name), key=lambda e: e["time"], reverse=True)
     if my_log:
         with st.expander("История действий с моими заявками (%d)" % len(my_log)):
-            st.caption("Если видите действие, которого не совершали, — сообщите руководителю.")
+            st.caption("Если видите действие, которого не совершали, — сообщите заведующему.")
             for e in my_log:
                 st.markdown("- %s — %s %s%s%s" % (
                     fmt_time(e["time"]), e["action"].lower(), e["period"],
@@ -295,7 +295,7 @@ with tab_me:
 
     st.subheader("Добавить отпуск")
     if locked:
-        st.warning("Приём заявок закрыт %s. Изменения — через руководителя." % fmt_date(vc.SUBMISSION_DEADLINE))
+        st.warning("Приём заявок закрыт %s. Изменения — через заведующего." % fmt_date(vc.SUBMISSION_DEADLINE))
     else:
         if name in RULES.main_names:
             st.caption(
@@ -374,7 +374,7 @@ with tab_me:
 
 with tab_manager:
     if not st.session_state.get("manager_unlocked"):
-        st.write("Здесь собраны заявки всех сотрудников — доступ только для руководителя.")
+        st.write("Здесь собраны заявки всех сотрудников — доступ только для заведующего.")
         pw = st.text_input("Код доступа", type="password", key="mgr_pw_input")
         if st.button("Войти", key="mgr_login_btn"):
             if pw == get_secret("manager_passcode", config.MANAGER_PASSCODE_FALLBACK):
@@ -446,11 +446,11 @@ with tab_manager:
                           key=lambda r: (order.get(r["name"], 999), r["start"]))
             df = pd.DataFrame(
                 [{"ФИО": r["name"], "Даты отпуска": fmt_period(r["start"], r["end"]), "Дней": r["days"],
-                  "Статус": STATUS_LABELS[r["status"]], "Комментарий руководителя": r["manager_comment"],
+                  "Статус": STATUS_LABELS[r["status"]], "Комментарий заведующего": r["manager_comment"],
                   "Конфликты": "; ".join(conflicts.get(r["id"], [])),
                   "Комментарий сотрудника": r["comment"]} for r in rows],
                 index=[r["id"] for r in rows],
-                columns=["ФИО", "Даты отпуска", "Дней", "Статус", "Комментарий руководителя", "Конфликты",
+                columns=["ФИО", "Даты отпуска", "Дней", "Статус", "Комментарий заведующего", "Конфликты",
                          "Комментарий сотрудника"],
             )
             edited = st.data_editor(
@@ -471,7 +471,7 @@ with tab_manager:
                     write_log(*[new_log(ts, m_year, by_id[i]["name"],
                                         "Статус: " + STATUS_LABELS[u["status"]],
                                         fmt_period(by_id[i]["start"], by_id[i]["end"]),
-                                        u["manager_comment"], "руководитель")
+                                        u["manager_comment"], "заведующий")
                                 for i, u in updates.items()])
                     pairs, crowd = approved_violations(backend.list_vacations(m_year), RULES)
                     if pairs or crowd:
@@ -490,7 +490,7 @@ with tab_manager:
                 backend.update_vacations(
                     {r["id"]: {"status": APPROVED, "manager_comment": r["manager_comment"]} for r in pending_ok}, ts)
                 write_log(*[new_log(ts, m_year, r["name"], "Статус: Одобрено", fmt_period(r["start"], r["end"]),
-                                    "", "руководитель") for r in pending_ok])
+                                    "", "заведующий") for r in pending_ok])
                 flash("success", "Одобрено заявок: %d." % len(pending_ok))
                 st.session_state.editor_n = st.session_state.get("editor_n", 0) + 1
                 st.rerun()

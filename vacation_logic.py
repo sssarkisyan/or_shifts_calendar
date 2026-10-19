@@ -199,7 +199,7 @@ def validate_new_period(name, start, end, year, all_records, entitlement, rules,
     errors += ["Даты недоступны: " + c + " (отпуска коллег уже одобрены)."
                for c in team_conflicts(name, start, end, approved(all_records), rules)]
     warnings = [] if errors else [
-        "На эти даты уже поданы заявки: " + c + ". Подать можно — решение примет руководитель."
+        "На эти даты уже поданы заявки: " + c + ". Подать можно — решение примет заведующий."
         for c in team_conflicts(name, start, end, active(all_records), rules)
     ]
     return errors, warnings
@@ -267,8 +267,8 @@ def editor_updates(original, edited):
     updates = {}
     for rec_id in edited.index:
         label = edited.at[rec_id, "Статус"]
-        comment = edited.at[rec_id, "Комментарий руководителя"] or ""
-        if (label, comment) != (original.at[rec_id, "Статус"], original.at[rec_id, "Комментарий руководителя"]):
+        comment = edited.at[rec_id, "Комментарий заведующего"] or ""
+        if (label, comment) != (original.at[rec_id, "Статус"], original.at[rec_id, "Комментарий заведующего"]):
             updates[rec_id] = {"status": label_to_status[label], "manager_comment": comment}
     return updates
 
@@ -376,7 +376,7 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
     # --- Все заявки ---
     ws = wb.create_sheet("Заявки")
     ws.append(["ФИО", "Начало", "Конец", "Дней", "Статус", "Комментарий сотрудника",
-               "Комментарий руководителя", "Подано", "Обновлено"])
+               "Комментарий заведующего", "Подано", "Обновлено"])
     for c in ws[1]:
         c.font = BOLD
     for r in sorted(records, key=lambda r: (names.index(r["name"]) if r["name"] in names else 999, r["start"])):
