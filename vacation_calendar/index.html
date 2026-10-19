@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Календарь отпусков</title>
+<!--
+  Кликабельный годовой календарь — компонент Streamlit без сборки (см.
+  vacation_app.py → vacation_calendar). Протокол обмена со Streamlit —
+  postMessage: componentReady / render / setComponentValue / setFrameHeight.
+  Аргументы: year, days {iso: {c: классы, t: подсказка}}, blocked [iso],
+  selected {start, end}, selectable, legend [[стиль, текст]].
+  Значение: {start, end, n} — n растёт с каждым кликом, чтобы повторный
+  выбор тех же дат тоже доходил до Streamlit.
+-->
+<style>
+  :root { --text: #31333F; --sel: #2F6FDE; --range: #DCE7FB; }
+  html, body { margin: 0; padding: 0; background: transparent; color: var(--text);
+               font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .vc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin: 4px 0 8px; }
+  .vc-month h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+  .vc-month table { border-collapse: separate; border-spacing: 2px; width: 100%; font-size: 12px; }
+  .vc-month th { font-weight: 500; opacity: .6; text-align: center; padding: 0; }
+  .vc-month td { text-align: center; height: 26px; border-radius: 4px; padding: 0; cursor: default; user-select: none; }
+  .vc-click td.vc-day { cursor: pointer; }
+  .vc-click td.vc-day:hover { box-shadow: inset 0 0 0 2px var(--sel); }
+  .vc-click td.vc-blocked { cursor: not-allowed; }
+  .vc-wk { color: #C0392B; }
+  .vc-hol { color: #D35400; font-weight: 700; }
+  .vc-p { background: #F9D5DC; color: #222; }
+  .vc-a { background: #CDEBD3; color: #222; }
+  .vc-pa { background: linear-gradient(135deg, #CDEBD3 50%, #F9D5DC 50%); color: #222; }
+  .vc-full { background: #BDBDBD; color: #555; text-decoration: line-through; }
+  .vc-bad { background: #FF7C80; color: #222; font-weight: 700; }
+  .vc-mine { box-shadow: inset 0 0 0 2px var(--sel); font-weight: 700; }
+  td.vc-range { background: var(--range); color: #222; }
+  td.vc-end { background: var(--sel); color: #fff; font-weight: 700; }
+  .vc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; margin-bottom: 6px; }
+  .vc-legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(function () {
+  var MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
+                "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+  var DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  var args = null, sel = { start: null, end: null }, hover = null, clicks = 0;
+  var root = document.getElementById("root");
+
+  function send(type, extra) {
+    var msg = { isStreamlitMessage: true, type: type };
+    for (var k in extra) msg[k] = extra[k];
+    window.parent.postMessage(msg, "*");
+  }
+  function iso(y, m, d) {
+    return y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  }
+  function inSelection(day) {
+    if (!sel.start) return false;
+    var end = sel.end || (hover && hover >= sel.start ? hover : null);
+    return end ? day >= sel.start && day <= end : day === sel.start;
+  }
+  function isEnd(day) { return day === sel.start || day === sel.end; }
+
+  function render() {
+    if (!args) return;
+    var blocked = {};
+    (args.blocked || []).forEach(function (d) { blocked[d] = true; });
+    var h = [];
+    if (args.legend && args.legend.length) {
+      h.push('<div class="vc-legend">');
+      args.legend.forEach(function (l) {
+        h.push('<span><span class="sw" style="' + esc(l[0]) + '"></span>' + esc(l[1]) + "</span>");
+      });
+      h.push("</div>");
+    }
+    h.push('<div class="vc-grid' + (args.selectable ? " vc-click" : "") + '">');
+    for (var m = 0; m < 12; m++) {
+      h.push('<div class="vc-month"><h4>' + MONTHS[m] + "</h4><table><tr>");
+      DOW.forEach(function (d) { h.push("<th>" + d + "</th>"); });
+      h.push("</tr><tr>");
+      var first = (new Date(args.year, m, 1).getDay() + 6) % 7;  // Пн = 0
+      var n = new Date(args.year, m + 1, 0).getDate();
+      for (var i = 0; i < first; i++) h.push("<td></td>");
+      for (var d = 1; d <= n; d++) {
+        var key = iso(args.year, m, d), info = (args.days || {})[key] || {};
+        var cls = ["vc-day"].concat(info.c ? [info.c] : []);
+        if (blocked[key]) cls.push("vc-blocked");
+        if (args.selectable && inSelection(key)) cls.push(isEnd(key) ? "vc-end" : "vc-range");
+        h.push('<td class="' + cls.join(" ") + '" data-d="' + key + '" title="' + esc(info.t || "") + '">' + d + "</td>");
+        if ((first + d) % 7 === 0 && d < n) h.push("</tr><tr>");
+      }
+      h.push("</tr></table></div>");
+    }
+    h.push("</div>");
+    root.innerHTML = h.join("");
+    send("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight });
+  }
+
+  root.addEventListener("click", function (e) {
+    var td = e.target.closest("td[data-d]");
+    if (!td || !args || !args.selectable || td.classList.contains("vc-blocked")) return;
+    var day = td.getAttribute("data-d");
+    if (!sel.start || sel.end) {
+      sel = { start: day, end: null };          // новый выбор: начало отпуска
+    } else if (day < sel.start) {
+      sel = { start: day, end: null };          // кликнули раньше начала — это новое начало
+    } else {
+      sel = { start: sel.start, end: day };     // конец отпуска
+    }
+    hover = null;
+    clicks += 1;
+    render();
+    send("streamlit:setComponentValue", { value: { start: sel.start, end: sel.end, n: clicks }, dataType: "json" });
+  });
+  root.addEventListener("mouseover", function (e) {
+    var td = e.target.closest("td[data-d]");
+    if (!td || !args || !args.selectable || !sel.start || sel.end) return;
+    var day = td.getAttribute("data-d");
+    if (day !== hover) { hover = day; render(); }
+  });
+
+  window.addEventListener("message", function (e) {
+    var data = e.data;
+    if (!data || data.type !== "streamlit:render") return;
+    args = data.args || {};
+    var s = args.selected || {};
+    sel = { start: s.start || null, end: s.end || null };
+    if (data.theme && data.theme.textColor) {
+      document.documentElement.style.setProperty("--text", data.theme.textColor);
+      if (data.theme.font) document.body.style.fontFamily = data.theme.font;
+    }
+    render();
+  });
+  window.addEventListener("resize", function () {
+    send("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight });
+  });
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>

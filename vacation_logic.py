@@ -50,6 +50,39 @@ def fmt_period(start, end):
     return "%s – %s" % (fmt_date(start), fmt_date(end))
 
 
+MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+              "августа", "сентября", "октября", "ноября", "декабря"]
+
+
+def fmt_date_words(d):
+    return "%d %s %d" % (d.day, MONTHS_GEN[d.month - 1], d.year)
+
+
+def fmt_period_words(start, end):
+    """«с 1 июля по 14 июля 2027» (год один раз, если совпадает)."""
+    if start.year == end.year:
+        return "с %d %s по %s" % (start.day, MONTHS_GEN[start.month - 1], fmt_date_words(end))
+    return "с %s по %s" % (fmt_date_words(start), fmt_date_words(end))
+
+
+def plural(n, one, few, many):
+    """plural(5, "день", "дня", "дней") → "дней"."""
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def n_days(n):
+    """5 → "5 дней", 1 → "1 день", 3 → "3 дня"."""
+    return "%d %s" % (n, plural(n, "день", "дня", "дней"))
+
+
+def n_doctors(n):
+    return "%d %s" % (n, plural(n, "основной врач", "основных врача", "основных врачей"))
+
+
 def active(records):
     return [r for r in records if r["status"] in ACTIVE_STATUSES]
 
@@ -112,14 +145,14 @@ def team_conflicts(name, start, end, others, rules):
     for r in sorted(others, key=lambda r: r["start"]):
         n = overlap_days(new, r)
         if n > rules.max_overlap:
-            out.append("пересечение с %s (%s) — %d дн., допускается не больше %d"
-                       % (r["name"], fmt_period(r["start"], r["end"]), n, rules.max_overlap))
+            out.append("пересечение с %s (%s) — %s, допускается не больше %s"
+                       % (r["name"], fmt_period(r["start"], r["end"]), n_days(n), n_days(rules.max_overlap)))
     occ = occupancy(others)
     full = [d for d in daterange(start, end) if len(occ.get(d, [])) >= rules.max_concurrent]
     if full:
         who = sorted({n for d in full for n in occ[d]})
-        out.append("%s в отпуске уже %d основных врача (%s) — это максимум"
-                   % (fmt_ranges(full), rules.max_concurrent, ", ".join(who)))
+        out.append("%s в отпуске уже %s (%s) — это максимум"
+                   % (fmt_ranges(full), n_doctors(rules.max_concurrent), ", ".join(who)))
     return out
 
 
@@ -135,32 +168,32 @@ def validate_new_period(name, start, end, year, all_records, entitlement, rules,
     if start > end:
         return ["Дата окончания раньше даты начала."], []
     if start.year != year or end.year != year:
-        return ["Период должен целиком лежать в %d году." % year], []
+        return ["Отпуск должен целиком лежать в %d году." % year], []
     days = vacation_days(start, end)
     if days == 0:
-        return ["В выбранном периоде только праздничные дни — они в отпуск не входят."], []
+        return ["В выбранных датах только праздничные дни — они в отпуск не входят."], []
 
     errors = []
     mine = [r for r in active(all_records) if r["name"] == name]
     for r in mine:
         if start <= r["end"] and r["start"] <= end:
-            errors.append("Пересекается с вашим периодом %s." % fmt_period(r["start"], r["end"]))
+            errors.append("Пересекается с вашим отпуском %s." % fmt_period(r["start"], r["end"]))
 
     used = sum(r["days"] for r in mine)
     if used + days > entitlement:
         errors.append(
-            "Превышен лимит: положено %d дн., уже запланировано %d, в этом периоде %d (осталось %d)."
-            % (entitlement, used, days, max(entitlement - used, 0))
+            "Превышен лимит: положено %s, уже запланировано %s, в этом отпуске %s (осталось %s)."
+            % (n_days(entitlement), n_days(used), n_days(days), n_days(max(entitlement - used, 0)))
         )
     else:
         has_long = any(r["days"] >= min_long_part for r in mine)
         remaining_after = entitlement - used - days
         if not has_long and days < min_long_part and remaining_after < min_long_part:
             errors.append(
-                "Хотя бы одна часть отпуска должна быть не меньше %d дн. (ст. 125 ТК РФ). "
-                "После этого периода останется %d дн. — длинную часть будет уже не набрать. "
-                "Удлините период или сначала запланируйте длинную часть."
-                % (min_long_part, remaining_after)
+                "Хотя бы одна часть отпуска должна быть не меньше %s (ст. 125 ТК РФ). "
+                "После этого отпуска останется %s — длинную часть будет уже не набрать. "
+                "Удлините отпуск или сначала запланируйте длинную часть."
+                % (n_days(min_long_part), n_days(remaining_after))
             )
 
     errors += ["Даты недоступны: " + c + " (отпуска коллег уже одобрены)."
@@ -261,14 +294,14 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
     # --- Свод ---
     ws = wb.active
     ws.title = "Свод"
-    ws.append(["ФИО", "Остаток прошлых периодов", "Положено всего", "Запланировано", "Одобрено", "На рассмотрении",
-               "Осталось", "Есть часть ≥%d дн." % min_long_part, "Периоды"])
+    ws.append(["ФИО", "Остаток за прошлый год", "Положено всего", "Запланировано", "Одобрено", "На рассмотрении",
+               "Осталось", "Есть часть от %s" % n_days(min_long_part), "Отпуска"])
     for c in ws[1]:
         c.font = BOLD
     for name in names:
         s = person_summary(name, records, entitlement_fn(name), min_long_part)
         periods = "; ".join(
-            "%s (%d дн., %s)" % (fmt_period(r["start"], r["end"]), r["days"], STATUS_LABELS[r["status"]].lower())
+            "%s (%s, %s)" % (fmt_period(r["start"], r["end"]), n_days(r["days"]), STATUS_LABELS[r["status"]].lower())
             for r in sorted(records, key=lambda r: r["start"]) if r["name"] == name
         )
         ws.append([name, carryover_fn(name), s["entitlement"], s["planned"], s["approved"], s["pending"],
@@ -286,8 +319,9 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
     ws.append(["Обозначения в календарях:"])
     for label, fill in [("Одобрено", FILL_APPROVED), ("На рассмотрении", FILL_PENDING),
                         ("Праздник", FILL_HOLIDAY), ("Выходной", FILL_WEEKEND),
-                        ("Нарушение среди одобренных: пересечение основных дольше %d дн. "
-                         "или больше %d основных в отпуске" % (rules.max_overlap, rules.max_concurrent), FILL_BAD)]:
+                        ("Нарушение среди одобренных: пересечение основных дольше %s "
+                         "или больше %s в отпуске" % (n_days(rules.max_overlap), n_doctors(rules.max_concurrent)),
+                         FILL_BAD)]:
         ws.append([label])
         ws.cell(ws.max_row, 1).fill = fill
 

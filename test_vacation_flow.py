@@ -95,7 +95,7 @@ check(any("%d году" % Y in e for e in validate(me, D(Y, 12, 25), D(Y + 1, 1,
 crowd = [rec(colleague, D(Y, 7, 1), D(Y, 7, 14)), rec(colleague2, D(Y, 7, 1), D(Y, 7, 14))]
 check(validate(me, D(Y, 7, 1), D(Y, 7, 14), crowd) == [], "двое коллег подали те же даты — подать можно")
 w = warn(me, D(Y, 7, 1), D(Y, 7, 14), crowd)
-check(any(colleague in x and "14 дн." in x for x in w) and any("максимум" in x for x in w),
+check(any(colleague in x and "14 дней" in x for x in w) and any("максимум" in x for x in w),
       "предупреждение: пересечение 14 дн. и уже двое на эти даты")
 check(warn(me, D(Y, 8, 1), D(Y, 8, 14), crowd) == [], "свободные даты — без предупреждений")
 
@@ -103,7 +103,7 @@ check(warn(me, D(Y, 8, 1), D(Y, 8, 14), crowd) == [], "свободные дат
 theirs = [rec(colleague, D(Y, 7, 1), D(Y, 7, 14), APPROVED)]
 check(validate(me, D(Y, 7, 8), D(Y, 7, 21), theirs) == [], "с одобренным пересечение ровно 7 дней — ок")
 errs = validate(me, D(Y, 7, 7), D(Y, 7, 20), theirs)
-check(any(colleague in e and "8 дн." in e and "одобрены" in e for e in errs), "с одобренным 8 дней — блок")
+check(any(colleague in e and "8 дней" in e and "одобрены" in e for e in errs), "с одобренным 8 дней — блок")
 check(any(colleague in e for e in validate(me, D(Y, 6, 20), D(Y, 7, 31), theirs)), "накрывает одобренный — блок")
 theirs[0]["status"] = REJECTED
 check(validate(me, D(Y, 7, 1), D(Y, 7, 14), theirs) == [], "отклонённый отпуск коллеги не мешает")
@@ -134,8 +134,9 @@ def as_employee(n):
 
 
 def pick(a, b):
-    key = [k for k in at.session_state.filtered_state if str(k).startswith("range_")][0]
-    at.date_input(key=key).set_value((a, b)).run()
+    """Как будто кликнули в календаре начало a и конец b."""
+    at.session_state[at.session_state["cur_sel_key"]] = {"start": a.isoformat(), "end": b.isoformat(), "n": 1}
+    at.run()
 
 
 def refresh():
@@ -158,13 +159,22 @@ def submit_btn():
 
 
 def calendar_html():
-    return at.get("html")[0].proto.body
+    """Аргументы календаря сотрудника (JSON-строка) — классы дней и подсказки."""
+    return json.dumps(json.loads(at.get("component_instance")[0].proto.json_args), ensure_ascii=False)
 
 
 as_employee(me)
+check(any("первый и последний день" in i.value for i in at.info), "подсказка: выбрать даты в календаре")
+at.session_state[at.session_state["cur_sel_key"]] = {"start": D(Y, 7, 1).isoformat(), "end": None, "n": 1}
+at.run()
+check(any("Начало отпуска — 1 июля %d" % Y in i.value for i in at.info), "выбрано только начало — просим последний день")
+check(json.loads(calendar_html())["selected"]["start"] == D(Y, 7, 1).isoformat(), "выбор передаётся в календарь")
+[b for b in at.button if b.label == "Сбросить даты"][0].click().run()
+check(json.loads(calendar_html())["selected"]["start"] is None, "«Сбросить даты» очищает выбор")
 pick(D(Y, 7, 1), D(Y, 7, 14))
-check(submit_btn().disabled, "без подтверждения «подаю от своего имени» кнопка неактивна")
-check(any(me in c.label for c in at.checkbox), "в подтверждении указано ФИО")
+check(submit_btn().disabled, "без подтверждения «подаю от имени» кнопка неактивна")
+check(any(c.label == "Подаю заявку от имени: **%s**" % me for c in at.checkbox), "подтверждение: «Подаю заявку от имени: ФИО»")
+check(any("с 1 июля по 14 июля %d — 14 дней отпуска" % Y in m.value for m in at.markdown), "выбранные даты — словами")
 confirm()
 check(not submit_btn().disabled, "после подтверждения кнопка активна")
 submit_btn().click().run()
@@ -192,7 +202,7 @@ check(any("История действий" in e.label for e in at.expander), "�
 # коллега подаёт те же даты — можно, с предупреждением
 as_employee(colleague)
 html_text = calendar_html()
-check('class="vc-p' in html_text and me in html_text, "календарь: заявка коллеги видна бледно-розовым, с фамилией")
+check('"c": "vc-p' in html_text and me in html_text, "календарь: заявка коллеги видна бледно-розовым, с фамилией")
 pick(D(Y, 7, 1), D(Y, 7, 14))
 confirm()
 check(any(me in w.value for w in at.warning) and not submit_btn().disabled,
@@ -229,13 +239,15 @@ check(not at.exception and not any("ОДОБРЕННЫХ" in e.value for e in at
 # 1–9 июля... 3–9 июля одобрено двоим → для остальных основных недоступно
 as_employee(colleague4)
 html_text = calendar_html()
-check('class="vc-full' in html_text, "календарь: дни с двумя одобренными — серые/недоступные")
+check('"c": "vc-full' in html_text, "календарь: дни с двумя одобренными — серые/недоступные")
+check(D(Y, 7, 5).isoformat() in json.loads(html_text)["blocked"], "закрытые дни нельзя выбрать кликом")
 pick(D(Y, 7, 5), D(Y, 7, 20))
 check(any("недоступны" in e.value for e in at.error) and submit_btn().disabled, "3-й основной на 05.07 — блок")
 pick(D(Y, 7, 10), D(Y, 7, 23))
 check(not at.error or all("ЛОКАЛЬНЫЙ" in e.value for e in at.error), "с 10 июля (одобрен один, пересечение 5 дн.) — ок")
 as_employee(part_timer)
-check('class="vc-full' not in calendar_html(), "у совместителя недоступных дней нет")
+check('"c": "vc-full' not in calendar_html() and not json.loads(calendar_html())["blocked"],
+      "у совместителя недоступных дней нет")
 
 # заведующий и профессор видят заявки друг друга; основные их не видят, лимиты не задеты
 prof = [x["name"] for x in config.STAFF if x["kind"] == "профессор"][0]
@@ -243,7 +255,7 @@ head = [x["name"] for x in config.STAFF if x["kind"] == "заведующий"][
 backend.add_vacation(rec(prof, D(Y, 3, 1), D(Y, 3, 14)))
 refresh()
 as_employee(head)
-check(prof in calendar_html() and 'class="vc-p' in calendar_html(), "заведующий видит заявку профессора")
+check(prof in calendar_html() and '"c": "vc-p' in calendar_html(), "заведующий видит заявку профессора")
 check(me not in calendar_html(), "заведующий не видит отпуска основных врачей")
 as_employee(me)
 check(prof not in calendar_html(), "основной врач не видит заявку профессора")
@@ -257,12 +269,21 @@ backend.add_vacation(rec(colleague4, D(Y, 7, 5), D(Y, 7, 6), APPROVED))
 refresh()
 check(any("ОДОБРЕННЫХ" in e.value and "05.07–06.07" in e.value for e in at.error),
       "руководитель видит 3 одобренных основных 5–6 июля")
-htmls = at.get("html")
-check(len(htmls) == 2, "календарь есть и у сотрудника, и в своде")
-mgr_html = htmls[1].proto.body
-check('class="vc-bad' in mgr_html, "календарь свода: нарушение среди одобренных — красным")
-check('class="vc-full' in mgr_html, "календарь свода: закрытые для основных дни — серым")
+cals = at.get("component_instance")
+check(len(cals) == 2, "календарь есть и у сотрудника, и в своде")
+check(json.loads(cals[0].proto.json_args)["selectable"] and not json.loads(cals[1].proto.json_args)["selectable"],
+      "у сотрудника календарь кликабельный, в своде — только просмотр")
+mgr_html = json.dumps(json.loads(cals[1].proto.json_args), ensure_ascii=False)
+check('"c": "vc-bad' in mgr_html, "календарь свода: нарушение среди одобренных — красным")
+check('"c": "vc-full' in mgr_html, "календарь свода: закрытые для основных дни — серым")
 check(prof + " (профессор)" in mgr_html and me in mgr_html, "календарь свода: видны все сотрудники, с типом у неосновных")
+
+# тексты: без сокращения «дн.» и без слова «период»
+texts = [e.value for kind in ("markdown", "caption", "info", "warning", "error", "success")
+         for e in at.get(kind) if isinstance(getattr(e, "value", None), str)]
+texts += [x.label for x in at.button] + [x.label for x in at.checkbox] + [x.label for x in at.expander]
+check(not [t for t in texts if "дн." in t], "нигде нет сокращения «дн.»")
+check(not [t for t in texts if "период" in t.lower()], "нигде нет слова «период»")
 
 # правка в таблице согласования → только изменённые строки уходят в сохранение
 import pandas as pd

@@ -4,10 +4,12 @@
 (см. VACATION_DEPLOY.md)."""
 import calendar as calmod
 import datetime
-import html
+import functools
+import os
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import config
 import vacation_config as vc
@@ -16,7 +18,7 @@ from vacation_backend import BACKEND_NAME, backend, new_log, new_record
 from vacation_logic import (
     APPROVED, DOW_RU, MONTH_NAMES, PENDING, REJECTED, STATUS_LABELS, TeamRules,
     active, approved, approved_violations, bad_days, build_excel, collapse_dates, daterange, editor_updates,
-    fmt_date, fmt_period, fmt_ranges, is_holiday, person_summary, record_conflicts, team_calendar,
+    fmt_date, fmt_date_words, fmt_period, fmt_period_words, fmt_ranges, is_holiday, n_days, n_doctors, person_summary, record_conflicts, team_calendar,
     team_conflicts, vacation_days, validate_new_period,
 )
 
@@ -96,28 +98,14 @@ def submissions_locked():
     return vc.SUBMISSION_DEADLINE is not None and datetime.date.today() > vc.SUBMISSION_DEADLINE
 
 
+# Годовой календарь — свой компонент Streamlit (vacation_calendar/index.html):
+# у сотрудника по нему кликают, выбирая даты отпуска (первый клик — начало,
+# второй — конец), у руководителя он только для просмотра.
+vacation_calendar = components.declare_component(
+    "vacation_calendar", path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "vacation_calendar"))
+
 # Бледно-розовый — подано, бледно-зелёный — одобрено (те же цвета в Excel).
 C_PENDING, C_APPROVED, C_FULL, C_BAD = "#F9D5DC", "#CDEBD3", "#BDBDBD", "#FF7C80"
-
-CALENDAR_CSS = """
-<style>
-.vc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin:4px 0 8px}
-.vc-month h4{margin:0 0 4px;font-size:14px;font-weight:600}
-.vc-month table{border-collapse:separate;border-spacing:2px;width:100%%;font-size:12px}
-.vc-month th{font-weight:500;opacity:.6;text-align:center;padding:0}
-.vc-month td{text-align:center;height:24px;border-radius:4px;padding:0;cursor:default}
-.vc-wk{color:#C0392B}
-.vc-hol{color:#D35400;font-weight:700}
-.vc-p{background:%(p)s;color:#222}
-.vc-a{background:%(a)s;color:#222}
-.vc-pa{background:linear-gradient(135deg,%(a)s 50%%,%(p)s 50%%);color:#222}
-.vc-full{background:%(f)s;color:#555;text-decoration:line-through}
-.vc-bad{background:%(b)s;color:#222;font-weight:700}
-.vc-mine{box-shadow:inset 0 0 0 2px #2F6FDE;font-weight:700}
-.vc-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin-bottom:6px}
-.vc-legend span.sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:5px}
-</style>
-""" % {"p": C_PENDING, "a": C_APPROVED, "f": C_FULL, "b": C_BAD}
 
 
 def visible_colleagues(me):
@@ -129,58 +117,55 @@ def visible_colleagues(me):
     return {n for n, k in KIND.items() if k in kinds and n != me}
 
 
-def year_calendar_html(year, team, full=(), bad=(), mine=(), show_full=False, show_bad=False, show_mine=False,
-                       label=lambda n: n):
-    """12 мини-календарей. team — {дата: {"approved": [..], "pending": [..]}};
-    full — дни, закрытые для основных (серые), bad — нарушения среди одобренных
-    (красные), mine — свои периоды (обведены). Подсказка при наведении — кто."""
-    legend = [('background:%s' % C_PENDING, "подана заявка"), ('background:%s' % C_APPROVED, "одобрено")]
-    if show_full:
-        legend.append(('background:%s' % C_FULL, "недоступно для основных (одобрено %d врачам)" % vc.MAX_CONCURRENT_MAIN))
-    if show_bad:
-        legend.append(('background:%s' % C_BAD, "нарушение среди одобренных"))
-    if show_mine:
-        legend.append(("box-shadow:inset 0 0 0 2px #2F6FDE", "мои периоды"))
-    parts = [CALENDAR_CSS, '<div class="vc-legend">']
-    parts += ['<span><span class="sw" style="%s"></span>%s</span>' % (style, text) for style, text in legend]
-    parts.append('</div><div class="vc-grid">')
-    for m in range(1, 13):
-        parts.append('<div class="vc-month"><h4>%s</h4><table><tr>%s</tr>'
-                     % (MONTH_NAMES[m - 1], "".join("<th>%s</th>" % d for d in DOW_RU)))
-        for week in calmod.Calendar().monthdatescalendar(year, m):
-            parts.append("<tr>")
-            for d in week:
-                if d.month != m:
-                    parts.append("<td></td>")
-                    continue
-                info = team.get(d, {"approved": [], "pending": []})
-                cls = []
-                if d in bad:
-                    cls.append("vc-bad")
-                elif d in full:
-                    cls.append("vc-full")
-                elif info["approved"] and info["pending"]:
-                    cls.append("vc-pa")
-                elif info["approved"]:
-                    cls.append("vc-a")
-                elif info["pending"]:
-                    cls.append("vc-p")
-                if is_holiday(d):
-                    cls.append("vc-hol")
-                elif d.weekday() >= 5:
-                    cls.append("vc-wk")
-                if d in mine:
-                    cls.append("vc-mine")
-                tip = [d.strftime("%d.%m")]
-                if info["approved"]:
-                    tip.append("одобрено: " + ", ".join(map(label, info["approved"])))
-                if info["pending"]:
-                    tip.append("подано: " + ", ".join(map(label, info["pending"])))
-                parts.append('<td class="%s" title="%s">%d</td>' % (" ".join(cls), html.escape("\n".join(tip)), d.day))
-            parts.append("</tr>")
-        parts.append("</table></div>")
-    parts.append("</div>")
-    return "".join(parts)
+def calendar_days(year, team, full=(), bad=(), mine=(), label=lambda n: n):
+    """{iso: {"c": CSS-классы, "t": подсказка}} для компонента календаря.
+    team — {дата: {"approved": [..], "pending": [..]}}; full — дни, закрытые
+    для основных (серые), bad — нарушения среди одобренных (красные), mine —
+    свои отпуска (обведены)."""
+    out = {}
+    for d in daterange(datetime.date(year, 1, 1), datetime.date(year, 12, 31)):
+        info = team.get(d, {"approved": [], "pending": []})
+        cls = []
+        if d in bad:
+            cls.append("vc-bad")
+        elif d in full:
+            cls.append("vc-full")
+        elif info["approved"] and info["pending"]:
+            cls.append("vc-pa")
+        elif info["approved"]:
+            cls.append("vc-a")
+        elif info["pending"]:
+            cls.append("vc-p")
+        if is_holiday(d):
+            cls.append("vc-hol")
+        elif d.weekday() >= 5:
+            cls.append("vc-wk")
+        if d in mine:
+            cls.append("vc-mine")
+        tip = []
+        if info["approved"]:
+            tip.append("одобрено: " + ", ".join(map(label, info["approved"])))
+        if info["pending"]:
+            tip.append("подано: " + ", ".join(map(label, info["pending"])))
+        if cls or tip:
+            out[d.isoformat()] = {"c": " ".join(cls), "t": "\n".join([fmt_date_words(d)] + tip) if tip else ""}
+    return out
+
+
+def to_n_doctors(n):
+    """Дательный падеж: «1 основному врачу», «2 основным врачам»."""
+    return "%d %s" % (n, "основному врачу" if n % 10 == 1 and n % 100 != 11 else "основным врачам")
+
+
+def legend(full=False, bad=False, mine=False):
+    items = [["background:%s" % C_PENDING, "подана заявка"], ["background:%s" % C_APPROVED, "одобрено"]]
+    if full:
+        items.append(["background:%s" % C_FULL, "недоступно (одобрено %s)" % to_n_doctors(vc.MAX_CONCURRENT_MAIN)])
+    if bad:
+        items.append(["background:%s" % C_BAD, "нарушение среди одобренных"])
+    if mine:
+        items.append(["box-shadow:inset 0 0 0 2px #2F6FDE", "мои отпуска"])
+    return items
 
 
 def closed_days(records, exclude_name=None):
@@ -189,23 +174,28 @@ def closed_days(records, exclude_name=None):
     return {d for d, info in main.items() if len(info["approved"]) >= RULES.max_concurrent}
 
 
-def employee_calendar_html(year, records, me):
-    """Календарь сотрудника: коллеги из его группы CALENDAR_GROUPS, свои периоды."""
+def employee_calendar_args(year, records, me, selected):
+    """Аргументы кликабельного календаря сотрудника: коллеги из его группы
+    CALENDAR_GROUPS, свои отпуска, закрытые дни (для основных) — их нельзя
+    выбрать началом или концом отпуска."""
     is_main = me in RULES.main_names
-    return year_calendar_html(
-        year, team_calendar(records, visible_colleagues(me), exclude_name=me),
-        full=closed_days(records, exclude_name=me) if is_main else (),
-        mine={d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])},
-        show_full=is_main, show_mine=True,
+    full = closed_days(records, exclude_name=me) if is_main else set()
+    return dict(
+        year=year, selectable=True, selected=selected, blocked=sorted(d.isoformat() for d in full),
+        days=calendar_days(year, team_calendar(records, visible_colleagues(me), exclude_name=me), full=full,
+                           mine={d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])}),
+        legend=legend(full=is_main, mine=True),
     )
 
 
-def manager_calendar_html(year, records):
-    """Календарь руководителя: отпуска всех сотрудников, закрытые дни и нарушения."""
-    return year_calendar_html(
-        year, team_calendar(records, set(NAMES)),
-        full=closed_days(records), bad=bad_days(records, RULES), show_full=True, show_bad=True,
-        label=lambda n: n if n in RULES.main_names else "%s (%s)" % (n, KIND.get(n, "?")),
+def manager_calendar_args(year, records):
+    """Календарь руководителя (только просмотр): все сотрудники, закрытые дни, нарушения."""
+    return dict(
+        year=year, selectable=False, selected=None, blocked=[],
+        days=calendar_days(year, team_calendar(records, set(NAMES)), full=closed_days(records),
+                           bad=bad_days(records, RULES),
+                           label=lambda n: n if n in RULES.main_names else "%s (%s)" % (n, KIND.get(n, "?"))),
+        legend=legend(full=True, bad=True),
     )
 
 
@@ -235,22 +225,22 @@ with tab_me:
     show_flash()
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Положено, дн.", s["entitlement"])
+    m1.metric("Положено дней", s["entitlement"])
     m2.metric("Запланировано", s["planned"])
     m3.metric("Осталось", s["entitlement"] - s["planned"])
     if vc.carryover(name):
-        st.caption("Положено: %d дн. за год + %d дн. остатка за прошлые периоды." % (vc.BASE_DAYS, vc.carryover(name)))
+        st.caption("Положено: %s за год + %s остатка за прошлый год." % (n_days(vc.BASE_DAYS), n_days(vc.carryover(name))))
     if mine and not s["has_long"]:
-        st.warning("Пока нет ни одной части отпуска от %d дней — она обязательна (ст. 125 ТК РФ)." % vc.MIN_LONG_PART)
+        st.warning("Пока нет ни одной части отпуска от %s — она обязательна (ст. 125 ТК РФ)." % n_days(vc.MIN_LONG_PART))
 
-    st.subheader("Мои периоды")
+    st.subheader("Мои отпуска")
     if not mine:
-        st.info("На %d год периодов пока нет." % year)
+        st.info("На %d год отпусков пока нет." % year)
     for r in mine:
         with st.container(border=True):
             c1, c2 = st.columns([5, 1])
-            c1.markdown("**%s** · %d дн. · %s %s" % (
-                fmt_period(r["start"], r["end"]), r["days"], STATUS_ICON[r["status"]], STATUS_LABELS[r["status"]]))
+            c1.markdown("**%s** · %s · %s %s" % (
+                fmt_period(r["start"], r["end"]), n_days(r["days"]), STATUS_ICON[r["status"]], STATUS_LABELS[r["status"]]))
             if r["comment"]:
                 c1.caption("Ваш комментарий: " + r["comment"])
             if r["manager_comment"]:
@@ -270,10 +260,10 @@ with tab_me:
                         backend.delete_vacation(r["id"])
                         write_log(new_log(now(), year, name, "Заявка удалена", fmt_period(r["start"], r["end"]),
                                           device=device()))
-                        flash("success", "Период %s удалён." % fmt_period(r["start"], r["end"]))
+                        flash("success", "Отпуск %s удалён." % fmt_period(r["start"], r["end"]))
                         st.rerun()
     if any(r["status"] != PENDING for r in mine):
-        st.caption("Одобренный или отклонённый период изменить самостоятельно нельзя — обратитесь к руководителю.")
+        st.caption("Одобренный или отклонённый отпуск изменить самостоятельно нельзя — обратитесь к руководителю.")
 
     my_log = sorted((e for e in load_log(year) if e["name"] == name), key=lambda e: e["time"], reverse=True)
     if my_log:
@@ -285,44 +275,68 @@ with tab_me:
                     (" — " + e["details"]) if e["details"] else "",
                     (" · " + e["device"]) if e["device"] else ""))
 
-    st.subheader("Добавить период")
+    st.subheader("Добавить отпуск")
     if locked:
         st.warning("Приём заявок закрыт %s. Изменения — через руководителя." % fmt_date(vc.SUBMISSION_DEADLINE))
     else:
         if name in RULES.main_names:
-            st.caption("Подать можно на любые даты — кто подал раньше, значения не имеет, решает руководитель. "
-                       "Недоступны только дни, где отпуск уже одобрен %d основным врачам; с каждым одобренным "
-                       "отпуском коллеги можно пересекаться не больше %d дн."
-                       % (vc.MAX_CONCURRENT_MAIN, vc.MAX_OVERLAP_DAYS))
+            st.caption(
+                "Подать заявку можно на любые даты, кто подал раньше — значения не имеет, решает руководитель. "
+                "Недоступны только дни, где отпуск уже одобрен %s; с каждым одобренным отпуском основного "
+                "сотрудника можно пересекаться не больше чем на %s."
+                % (to_n_doctors(vc.MAX_CONCURRENT_MAIN), n_days(vc.MAX_OVERLAP_DAYS)))
         else:
-            st.caption("Ограничения на пересечение с отпусками коллег на вас не распространяются.")
-        st.html(employee_calendar_html(year, records, name))
+            st.caption("Подать заявку можно на любые даты. Ограничения на пересечение с отпусками коллег "
+                       "на вас не распространяются.")
 
+        # Выбор дат — кликом по календарю ниже. Значение компонента копируется в
+        # sel_key (on_change), форма над календарём читает его оттуда.
         form_n = st.session_state.get("form_n", 0)
-        picked = st.date_input(
-            "Даты отпуска (выберите начало и конец)", value=(),
-            min_value=datetime.date(year, 1, 1), max_value=datetime.date(year, 12, 31),
-            format="DD.MM.YYYY", key="range_%d" % form_n,
+        pick_n = st.session_state.get("pick_n", 0)
+        sel_key = "sel_%d_%d_%s_%d" % (form_n, pick_n, name, year)
+        cal_key = "cal_" + sel_key
+        st.session_state.cur_sel_key = sel_key  # для test_vacation_flow.py
+        sel = st.session_state.get(sel_key) or {}
+        start = datetime.date.fromisoformat(sel["start"]) if sel.get("start") else None
+        end = datetime.date.fromisoformat(sel["end"]) if sel.get("end") else None
+
+        st.caption("Кликните в календаре первый, затем последний день отпуска. "
+                   "Наведите на день — видно, кто из коллег в отпуске.")
+        vacation_calendar(
+            **employee_calendar_args(year, records, name, {"start": sel.get("start"), "end": sel.get("end")}),
+            key=cal_key, default=None,
+            on_change=functools.partial(lambda sk, ck: st.session_state.__setitem__(sk, st.session_state.get(ck)),
+                                        sel_key, cal_key),
         )
-        comment = st.text_input("Комментарий (необязательно)", key="comment_%d" % form_n)
-        confirmed = st.checkbox("Подаю заявку от своего имени: **%s**" % name, key="confirm_%d_%s" % (form_n, name))
 
         errors = []
-        if len(picked) == 2:
-            start, end = picked
-            n_days = vacation_days(start, end)
-            n_hol = (end - start).days + 1 - n_days
-            st.write("Дней отпуска: **%d**" % n_days
-                     + (" (праздничных дней в периоде: %d — в отпуск не входят)" % n_hol if n_hol else ""))
+        if start and end:
+            days = vacation_days(start, end)
+            n_hol = (end - start).days + 1 - days
+            st.markdown("**Выбрано:** %s — %s отпуска%s" % (
+                fmt_period_words(start, end), n_days(days),
+                " (праздничные дни не входят: %s)" % n_days(n_hol) if n_hol else ""))
             errors, warnings = validate_new_period(name, start, end, year, records, vc.entitlement(name),
                                                    RULES, vc.MIN_LONG_PART)
             for e in errors:
                 st.error(e)
             for w in warnings:
                 st.warning(w)
+        elif start:
+            st.info("Начало отпуска — %s. Теперь выберите в календаре последний день." % fmt_date_words(start))
+        else:
+            st.info("Выберите в календаре выше первый и последний день отпуска.")
 
-        if st.button("Подать заявку", type="primary", width="stretch", disabled=len(picked) != 2 or bool(errors) or not confirmed):
-            start, end = picked
+        comment = st.text_input("Комментарий (необязательно)", key="comment_%d" % form_n)
+        confirmed = st.checkbox("Подаю заявку от имени: **%s**" % name, key="confirm_%d_%s" % (form_n, name))
+
+        b1, b2 = st.columns([3, 1])
+        submit = b1.button("Подать заявку", type="primary", width="stretch",
+                           disabled=not (start and end) or bool(errors) or not confirmed)
+        if b2.button("Сбросить даты", width="stretch", disabled=not start):
+            st.session_state.pick_n = pick_n + 1
+            st.rerun()
+        if submit:
             # перепроверка по свежим данным — вдруг коллеге только что одобрили отпуск
             errors, _ = validate_new_period(name, start, end, year, backend.list_vacations(year),
                                             vc.entitlement(name), RULES, vc.MIN_LONG_PART)
@@ -335,8 +349,8 @@ with tab_me:
                 write_log(new_log(ts, year, name, "Подана заявка", fmt_period(start, end),
                                   comment.strip(), device()))
                 st.session_state.form_n = form_n + 1
-                flash("success", "Заявка подана: %s (%d дн.). Статус — «На рассмотрении»."
-                      % (fmt_period(start, end), vacation_days(start, end)))
+                flash("success", "Заявка подана: %s (%s). Статус — «На рассмотрении»."
+                      % (fmt_period_words(start, end), n_days(vacation_days(start, end))))
                 st.rerun()
 
 with tab_manager:
@@ -389,14 +403,14 @@ with tab_manager:
 
         def fmt_overlap(o):
             a, b, n = o
-            return "%s (%s) и %s (%s) — %d дн." % (a["name"], fmt_period(a["start"], a["end"]),
-                                                  b["name"], fmt_period(b["start"], b["end"]), n)
+            return "%s (%s) и %s (%s) — %s" % (a["name"], fmt_period(a["start"], a["end"]),
+                                                  b["name"], fmt_period(b["start"], b["end"]), n_days(n))
 
         if over:
-            st.error("Среди ОДОБРЕННЫХ: пересечение основных сотрудников дольше %d дн.:\n\n" % vc.MAX_OVERLAP_DAYS
+            st.error("Среди ОДОБРЕННЫХ: пересечение основных сотрудников дольше %s:\n\n" % n_days(vc.MAX_OVERLAP_DAYS)
                      + "\n".join("- " + fmt_overlap(o) for o in over))
         if crowded:
-            st.error("Среди ОДОБРЕННЫХ: больше %d основных врачей в отпуске одновременно:\n\n" % vc.MAX_CONCURRENT_MAIN
+            st.error("Среди ОДОБРЕННЫХ: больше %s в отпуске одновременно:\n\n" % n_doctors(vc.MAX_CONCURRENT_MAIN)
                      + "\n".join("- %s — %s" % (fmt_ranges([d for d in crowded if a <= d <= b]),
                                                 ", ".join(sorted({n for d in crowded if a <= d <= b for n in crowded[d]})))
                                  for a, b in crowded_ranges))
@@ -412,17 +426,17 @@ with tab_manager:
             rows = sorted((r for r in records if STATUS_LABELS[r["status"]] in show),
                           key=lambda r: (order.get(r["name"], 999), r["start"]))
             df = pd.DataFrame(
-                [{"ФИО": r["name"], "Период": fmt_period(r["start"], r["end"]), "Дней": r["days"],
+                [{"ФИО": r["name"], "Даты отпуска": fmt_period(r["start"], r["end"]), "Дней": r["days"],
                   "Статус": STATUS_LABELS[r["status"]], "Комментарий руководителя": r["manager_comment"],
                   "Конфликты": "; ".join(conflicts.get(r["id"], [])),
                   "Комментарий сотрудника": r["comment"]} for r in rows],
                 index=[r["id"] for r in rows],
-                columns=["ФИО", "Период", "Дней", "Статус", "Комментарий руководителя", "Конфликты",
+                columns=["ФИО", "Даты отпуска", "Дней", "Статус", "Комментарий руководителя", "Конфликты",
                          "Комментарий сотрудника"],
             )
             edited = st.data_editor(
                 df, hide_index=True, width="stretch", key="mgr_editor_%d_%d" % (m_year, st.session_state.get("editor_n", 0)),
-                disabled=["ФИО", "Период", "Дней", "Конфликты", "Комментарий сотрудника"],
+                disabled=["ФИО", "Даты отпуска", "Дней", "Конфликты", "Комментарий сотрудника"],
                 column_config={
                     "Статус": st.column_config.SelectboxColumn(options=list(STATUS_LABELS.values()), required=True),
                     "Дней": st.column_config.NumberColumn(width="small"),
@@ -466,13 +480,13 @@ with tab_manager:
         if log:
             with st.expander("Журнал действий (%d)" % len(log)):
                 st.dataframe(pd.DataFrame(
-                    [{"Время": fmt_time(e["time"]), "ФИО": e["name"], "Действие": e["action"], "Период": e["period"],
+                    [{"Время": fmt_time(e["time"]), "ФИО": e["name"], "Действие": e["action"], "Даты отпуска": e["period"],
                       "Подробности": e["details"], "Устройство": e["device"]} for e in log]),
                     hide_index=True, width="stretch")
 
         # --- Календарь ---
         st.subheader("Календарь на год")
-        st.html(manager_calendar_html(m_year, records))
+        vacation_calendar(**manager_calendar_args(m_year, records), key="mgr_cal_%d" % m_year, default=None)
         st.caption("Наведите на день — видно, кто в отпуске. Ниже — тот же месяц по сотрудникам.")
 
         st.subheader("По сотрудникам")
@@ -516,8 +530,8 @@ with tab_manager:
         st.dataframe(cal.style.apply(header_style, axis=0), width="stretch",
                      column_config={c: st.column_config.TextColumn(width=36) for c in cols})
         st.caption("От (зелёный) — одобрено, ? (розовый) — подана заявка. Серым — выходные, оранжевым — "
-                   "праздники. Красным в строке «%s» — нарушение среди одобренных: пересечение дольше %d дн. "
-                   "или больше %d основных в отпуске." % (ROW_APPR, vc.MAX_OVERLAP_DAYS, vc.MAX_CONCURRENT_MAIN))
+                   "праздники. Красным в строке «%s» — нарушение среди одобренных: пересечение дольше %s "
+                   "или больше %s в отпуске." % (ROW_APPR, n_days(vc.MAX_OVERLAP_DAYS), n_doctors(vc.MAX_CONCURRENT_MAIN)))
 
         st.download_button(
             "Скачать график отпусков (Excel)",
