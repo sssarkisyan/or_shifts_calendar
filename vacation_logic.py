@@ -83,6 +83,11 @@ def n_doctors(n):
     return "%d %s" % (n, plural(n, "основной врач", "основных врача", "основных врачей"))
 
 
+def n_doctors_gen(n):
+    """Родительный падеж — после «больше», «у»: «2 основных врачей», «1 основного врача»."""
+    return "%d %s" % (n, "основного врача" if n % 10 == 1 and n % 100 != 11 else "основных врачей")
+
+
 def active(records):
     return [r for r in records if r["status"] in ACTIVE_STATUSES]
 
@@ -134,9 +139,11 @@ def overlap_days(a, b):
     return max(0, (min(a["end"], b["end"]) - max(a["start"], b["start"])).days + 1)
 
 
-def team_conflicts(name, start, end, others, rules):
+def team_conflicts(name, start, end, others, rules, all_approved=True):
     """Нарушения командных правил, если сотрудник name уйдёт в отпуск
-    start–end, а others — уже учитываемые отпуска коллег. Список строк."""
+    start–end, а others — уже учитываемые отпуска коллег. Список строк.
+    all_approved — others только одобренные (тогда «в отпуске уже … — это
+    максимум»), иначе среди них есть поданные заявки («заявки уже у …»)."""
     if name not in rules.main_names:
         return []
     others = [r for r in others if r["name"] != name and r["name"] in rules.main_names]
@@ -151,8 +158,12 @@ def team_conflicts(name, start, end, others, rules):
     full = [d for d in daterange(start, end) if len(occ.get(d, [])) >= rules.max_concurrent]
     if full:
         who = sorted({n for d in full for n in occ[d]})
-        out.append("%s в отпуске уже %s (%s) — это максимум"
-                   % (fmt_ranges(full), n_doctors(rules.max_concurrent), ", ".join(who)))
+        if all_approved:
+            out.append("%s в отпуске уже %s (%s) — это максимум"
+                       % (fmt_ranges(full), n_doctors(rules.max_concurrent), ", ".join(who)))
+        else:
+            out.append("%s заявки уже у %s (%s)"
+                       % (fmt_ranges(full), n_doctors_gen(rules.max_concurrent), ", ".join(who)))
     return out
 
 
@@ -160,13 +171,15 @@ def approved(records):
     return [r for r in records if r["status"] == APPROVED]
 
 
-def validate_new_period(name, start, end, year, all_records, entitlement, rules, min_long_part):
+def validate_new_period(name, start, end, year, all_records, entitlement, rules, min_long_part, today=None):
     """(ошибки, предупреждения). Ошибки блокируют подачу: свои правила (лимит
     дней, часть ≥14, пересечение со своим периодом) и конфликт с ОДОБРЕННЫМИ
     отпусками коллег. Предупреждения — конфликт с поданными заявками коллег:
-    подать можно, решение за руководителем."""
+    подать можно, решение за заведующим. today — нельзя подать на прошедшие даты."""
     if start > end:
         return ["Дата окончания раньше даты начала."], []
+    if today is not None and start < today:
+        return ["Нельзя подать отпуск на прошедшие даты."], []
     if start.year != year or end.year != year:
         return ["Отпуск должен целиком лежать в %d году." % year], []
     days = vacation_days(start, end)
@@ -200,7 +213,7 @@ def validate_new_period(name, start, end, year, all_records, entitlement, rules,
                for c in team_conflicts(name, start, end, approved(all_records), rules)]
     warnings = [] if errors else [
         "На эти даты уже поданы заявки: " + c + ". Подать можно — решение примет заведующий."
-        for c in team_conflicts(name, start, end, active(all_records), rules)
+        for c in team_conflicts(name, start, end, active(all_records), rules, all_approved=False)
     ]
     return errors, warnings
 
@@ -208,7 +221,7 @@ def validate_new_period(name, start, end, year, all_records, entitlement, rules,
 def record_conflicts(rec, records, rules):
     """Конфликты заявки rec с остальными активными заявками (для руководителя)."""
     others = [r for r in active(records) if r["id"] != rec["id"]]
-    return team_conflicts(rec["name"], rec["start"], rec["end"], others, rules)
+    return team_conflicts(rec["name"], rec["start"], rec["end"], others, rules, all_approved=False)
 
 
 def approved_violations(records, rules):
@@ -320,7 +333,7 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
     for label, fill in [("Одобрено", FILL_APPROVED), ("На рассмотрении", FILL_PENDING),
                         ("Праздник", FILL_HOLIDAY), ("Выходной", FILL_WEEKEND),
                         ("Нарушение среди одобренных: пересечение основных дольше %s "
-                         "или больше %s в отпуске" % (n_days(rules.max_overlap), n_doctors(rules.max_concurrent)),
+                         "или больше %s в отпуске" % (n_days(rules.max_overlap), n_doctors_gen(rules.max_concurrent)),
                          FILL_BAD)]:
         ws.append([label])
         ws.cell(ws.max_row, 1).fill = fill
@@ -358,7 +371,7 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
                     c.fill = FILL_APPROVED
                 elif st == PENDING:
                     c.fill = FILL_PENDING
-        for label, key in (("Основных: одобрено", "approved"), ("Основных: на рассмотрении", "pending")):
+        for label, key in (("Основных: одобрено", "approved"), ("Основных: подано", "pending")):
             ws.append([label] + [len(team.get(d, {}).get(key, [])) or "" for d in dates])
             row = ws.max_row
             ws.cell(row, 1).font = BOLD

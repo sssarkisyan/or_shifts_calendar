@@ -95,8 +95,9 @@ check(any("%d году" % Y in e for e in validate(me, D(Y, 12, 25), D(Y + 1, 1,
 crowd = [rec(colleague, D(Y, 7, 1), D(Y, 7, 14)), rec(colleague2, D(Y, 7, 1), D(Y, 7, 14))]
 check(validate(me, D(Y, 7, 1), D(Y, 7, 14), crowd) == [], "двое коллег подали те же даты — подать можно")
 w = warn(me, D(Y, 7, 1), D(Y, 7, 14), crowd)
-check(any(colleague in x and "14 дней" in x for x in w) and any("максимум" in x for x in w),
-      "предупреждение: пересечение 14 дн. и уже двое на эти даты")
+check(any(colleague in x and "14 дней" in x for x in w) and any("заявки уже у 2 основных врачей" in x for x in w),
+      "предупреждение: пересечение 14 дней и заявки уже у двоих (без «это максимум»)")
+check(not any("максимум" in x for x in w), "для поданных заявок нет «это максимум»")
 check(warn(me, D(Y, 8, 1), D(Y, 8, 14), crowd) == [], "свободные даты — без предупреждений")
 
 # --- одобренные отпуска блокируют: пересечение > 7 дней ---
@@ -179,7 +180,7 @@ confirm()
 check(not submit_btn().disabled, "после подтверждения кнопка активна")
 submit_btn().click().run()
 check(not at.exception, "подача без ошибок")
-mine = [r for r in backend.list_vacations(Y) if r["name"] == me]
+mine = [r for r in backend.list_vacations(Y)[0] if r["name"] == me]
 check(len(mine) == 1 and mine[0]["days"] == 14 and mine[0]["status"] == PENDING, "заявка сохранена, 14 дн., на рассмотрении")
 check(any("Заявка подана" in s.value for s in at.success), "сообщение об успехе")
 check(log_actions(me) == ["Подана заявка"], "журнал: «Подана заявка»")
@@ -192,10 +193,10 @@ check(any("Пересекается" in e.value for e in at.error) and submit_bt
 pick(D(Y, 10, 1), D(Y, 10, 7))
 confirm()
 submit_btn().click().run()
-second = [r for r in backend.list_vacations(Y) if r["name"] == me and r["start"].month == 10]
+second = [r for r in backend.list_vacations(Y)[0] if r["name"] == me and r["start"].month == 10]
 check(len(second) == 1, "вторая заявка сохранена")
 [b for b in at.button if b.key == "del_" + second[0]["id"]][0].click().run()
-check(len([r for r in backend.list_vacations(Y) if r["name"] == me]) == 1, "удаление своей заявки (через подтверждение)")
+check(len([r for r in backend.list_vacations(Y)[0] if r["name"] == me]) == 1, "удаление своей заявки (через подтверждение)")
 check(log_actions(me) == ["Подана заявка", "Подана заявка", "Заявка удалена"], "журнал: подача, подача, удаление")
 check(any("История действий" in e.label for e in at.expander), "сотрудник видит историю своих заявок")
 
@@ -219,7 +220,7 @@ confirm()
 check(any(me in w.value for w in at.warning) and not submit_btn().disabled,
       "предупреждение о заявке коллеги, но подать можно")
 submit_btn().click().run()
-check(len([r for r in backend.list_vacations(Y) if r["name"] == colleague]) == 1, "заявка на те же даты сохранена")
+check(len([r for r in backend.list_vacations(Y)[0] if r["name"] == colleague]) == 1, "заявка на те же даты сохранена")
 
 # --- UI: руководитель ---
 backend.add_vacation(rec(colleague3, D(Y, 10, 1), D(Y, 10, 14)))  # ни с кем не пересекается
@@ -232,15 +233,16 @@ check(not any("ОДОБРЕННЫХ" in e.value for e in at.error), "пока н
 approve = [b for b in at.button if b.label.startswith("Одобрить без конфликтов")]
 check(len(approve) == 1 and "(1)" in approve[0].label, "«Одобрить без конфликтов» — только 1 заявка")
 approve[0].click().run()
-st_by_name = {r["name"]: r["status"] for r in backend.list_vacations(Y)}
+st_by_name = {r["name"]: r["status"] for r in backend.list_vacations(Y)[0]}
 check(st_by_name[colleague3] == APPROVED and st_by_name[me] == PENDING and st_by_name[colleague] == PENDING,
       "одобрена только бесконфликтная, спорные остались на рассмотрении")
 check(log_actions(colleague3) == ["Статус: Одобрено"], "журнал: одобрение записано")
+check(any("Одобрено заявок: 1" in x.value for x in at.success), "заведующий видит сообщение «Одобрено заявок: 1»")
 check([e["device"] for e in backend.list_log(Y) if e["name"] == colleague3] == ["заведующий"], "журнал: кто — руководитель")
 check(any("Журнал действий" in e.label for e in at.expander), "руководитель видит журнал")
 
 # руководитель одобряет «меня», коллегу — отклоняет
-ids = {r["name"]: r["id"] for r in backend.list_vacations(Y)}
+ids = {r["name"]: r["id"] for r in backend.list_vacations(Y)[0]}
 backend.update_vacations({ids[me]: {"status": APPROVED, "manager_comment": ""},
                           ids[colleague]: {"status": REJECTED, "manager_comment": "перенесите на август"}}, "t2")
 backend.add_vacation(rec(colleague2, D(Y, 7, 3), D(Y, 7, 9), APPROVED))  # 7 дн. с «мной» — допустимо
@@ -316,8 +318,35 @@ edit2 = orig.copy()
 edit2.at["a", "Комментарий заведующего"] = None
 check(editor_updates(orig, edit2) == {}, "очищенная пустая ячейка не считается изменением")
 
+# --- прошедшие даты, падежи ---
+from vacation_logic import n_doctors_gen
+check(validate_new_period(me, D(Y, 7, 1), D(Y, 7, 14), Y, [], 31, RULES, 14, today=D(Y, 7, 2))[0]
+      == ["Нельзя подать отпуск на прошедшие даты."], "нельзя подать на прошедшие даты")
+check(n_doctors_gen(2) == "2 основных врачей" and n_doctors_gen(1) == "1 основного врача", "«больше 2 основных врачей»")
+
+# --- испорченные вручную строки таблицы не роняют приложение ---
+from vacation_backend import HEADER, _rows_from_values
+rows = backend._read()
+good = dict(rows[0])
+good.update({"ID": "manual1", "ФИО": colleague4, "Начало": "01.11.%d" % Y, "Конец": "14.11.%d" % Y, "Статус": "Одобрено"})
+broken = dict(rows[0])
+broken.update({"ID": "manual2", "ФИО": colleague4, "Начало": "1 ноября", "Статус": "PENDING"})
+backend._write(rows + [good, broken])
+recs_now, bad_now = backend.list_vacations(Y)
+check(any(r["id"] == "manual1" and r["status"] == APPROVED and r["start"] == D(Y, 11, 1) for r in recs_now),
+      "дата 01.11.2027 и статус «Одобрено», введённые вручную, читаются")
+check(len(bad_now) == 1 and "непонятная дата" in bad_now[0], "нечитаемая строка пропущена и описана")
+refresh()
+check(not at.exception, "приложение не падает из-за испорченной строки")
+check(any("Не удалось прочитать строки" in w.value for w in at.warning), "заведующий видит предупреждение о строке")
+backend._write([r for r in backend._read() if r["ID"] not in ("manual1", "manual2")])
+old = [[("Комментарий руководителя" if h == "Комментарий заведующего" else h) for h in HEADER],
+       ["x", me, str(Y), "%d-03-01" % Y, "%d-03-14" % Y, "14", "PENDING", "", "ок", "t", "t"]]
+check(_rows_from_values(old)[0]["Комментарий заведующего"] == "ок", "старый заголовок колонки тоже читается")
+refresh()
+
 # --- Excel ---
-recs = backend.list_vacations(Y)
+recs = backend.list_vacations(Y)[0]
 xlsx = build_excel(Y, config.STAFF, recs, vc.entitlement, vc.carryover, RULES, vc.MIN_LONG_PART)
 wb = load_workbook(io.BytesIO(xlsx))
 check(wb.sheetnames[0] == "Свод" and "Июль" in wb.sheetnames and "Заявки" in wb.sheetnames, "листы Excel")

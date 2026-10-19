@@ -154,7 +154,11 @@
 
   root.addEventListener("click", function (e) {
     var td = e.target.closest("td[data-d]");
-    if (!td || !args) return;
+    if (!args) return;
+    if (!td) {  // касание мимо дней — убрать контур и подсказку
+      if (focus) { focus = null; render(); }
+      return;
+    }
     var day = td.getAttribute("data-d");
     focus = day;  // на телефоне касание = наведение: контур и подсказка
     if (!args.selectable || td.classList.contains("vc-blocked")) { render(); return; }
@@ -170,14 +174,18 @@
     render();
     send("streamlit:setComponentValue", { value: { start: sel.start, end: sel.end, n: clicks }, dataType: "json" });
   });
-  root.addEventListener("mouseover", function (e) {
+  // Наведение — только мышью: на телефоне перерисовка по «наведению» могла
+  // бы съесть первое касание (iOS), там всё делает click.
+  root.addEventListener("pointerover", function (e) {
+    if (e.pointerType !== "mouse") return;
     var td = e.target.closest("td[data-d]");
     if (!td || !args) return;
     var day = td.getAttribute("data-d");
     var newHover = args.selectable && sel.start && !sel.end ? day : null;
     if (day !== focus || newHover !== hover) { focus = day; hover = newHover; render(); }
   });
-  root.addEventListener("mouseleave", function () {
+  root.addEventListener("pointerleave", function (e) {
+    if (e.pointerType !== "mouse") return;
     if (focus || hover) { focus = null; hover = null; render(); }
   });
 

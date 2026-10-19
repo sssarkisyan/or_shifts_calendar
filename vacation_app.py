@@ -14,11 +14,11 @@ import streamlit.components.v1 as components
 import config
 import vacation_config as vc
 from secrets_util import get_secret
-from vacation_backend import BACKEND_NAME, backend, new_log, new_record
+from vacation_backend import BACKEND_NAME, WRITE_LOCK, backend, new_log, new_record
 from vacation_logic import (
     APPROVED, DOW_RU, MONTH_NAMES, PENDING, REJECTED, STATUS_LABELS, TeamRules,
     active, approved, approved_violations, bad_days, build_excel, collapse_dates, daterange, editor_updates,
-    fmt_date, fmt_date_words, fmt_period, fmt_period_words, fmt_ranges, is_holiday, n_days, n_doctors, person_summary, record_conflicts, team_calendar,
+    fmt_date, fmt_date_words, fmt_period, fmt_period_words, fmt_ranges, is_holiday, n_days, n_doctors, n_doctors_gen, person_summary, record_conflicts, team_calendar,
     team_conflicts, vacation_days, validate_new_period,
 )
 
@@ -39,6 +39,10 @@ STATUS_ICON = {PENDING: "🕓", APPROVED: "✅", REJECTED: "❌"}
 MSK = datetime.timezone(datetime.timedelta(hours=3))  # сервер Streamlit Cloud живёт в UTC
 
 
+def today():
+    return datetime.datetime.now(MSK).date()
+
+
 def now():
     return datetime.datetime.now(MSK).replace(tzinfo=None).isoformat(timespec="seconds")
 
@@ -47,19 +51,43 @@ def now():
 # один сервис-аккаунт, а у Google лимит ~60 чтений в минуту. После любой
 # записи кэш сбрасывается, проверка перед подачей всегда читает свежие данные.
 @st.cache_data(ttl=60, show_spinner=False)
-def load_vacations(year):
-    return backend.list_vacations(year)
+def _load_all(year):
+    return backend.list_vacations(year)  # (заявки, нечитаемые строки)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_log(year):
+def _load_log(year):
     return backend.list_log(year)
+
+
+def sheet_unavailable(e):
+    st.error("Google Таблица сейчас не отвечает (%s). Подождите минуту и обновите страницу — "
+             "ничего не потеряно." % type(e).__name__)
+    st.stop()
+
+
+def load_vacations(year):
+    try:
+        return _load_all(year)[0]
+    except Exception as e:  # лимит запросов Google (429), сеть и т.п.
+        sheet_unavailable(e)
+
+
+def unreadable_rows(year):
+    return _load_all(year)[1]
+
+
+def load_log(year):
+    try:
+        return _load_log(year)
+    except Exception as e:
+        sheet_unavailable(e)
 
 
 def write_log(*entries):
     backend.add_log(list(entries))
-    load_vacations.clear()
-    load_log.clear()
+    _load_all.clear()
+    _load_log.clear()
 
 
 def device():
@@ -84,18 +112,21 @@ def fmt_time(ts):
         return ts
 
 
-def flash(kind, text):
-    st.session_state.flash = (kind, text)
+def flash(kind, text, where="me"):
+    """Сообщение после st.rerun(). where — вкладка ("me" / "mgr"): обе вкладки
+    рисуются при каждом запуске, без разделения сообщение заведующего
+    «съедала» бы вкладка сотрудника."""
+    st.session_state["flash_" + where] = (kind, text)
 
 
-def show_flash():
-    if "flash" in st.session_state:
-        kind, text = st.session_state.pop("flash")
+def show_flash(where="me"):
+    if "flash_" + where in st.session_state:
+        kind, text = st.session_state.pop("flash_" + where)
         getattr(st, kind)(text)
 
 
 def submissions_locked():
-    return vc.SUBMISSION_DEADLINE is not None and datetime.date.today() > vc.SUBMISSION_DEADLINE
+    return vc.SUBMISSION_DEADLINE is not None and today() > vc.SUBMISSION_DEADLINE
 
 
 # Годовой календарь — свой компонент Streamlit (vacation_calendar/index.html):
@@ -233,7 +264,7 @@ tab_me, tab_manager = st.tabs(["Мои отпуска", "Свод по отде�
 with tab_me:
     col1, col2 = st.columns([3, 1])
     name = col1.selectbox("ФИО", NAMES, key="me_name")
-    year = col2.selectbox("Год", [vc.PLAN_YEAR - 1, vc.PLAN_YEAR, vc.PLAN_YEAR + 1], index=1, key="me_year")
+    year = col2.selectbox("Год", [vc.PLAN_YEAR, vc.PLAN_YEAR + 1], key="me_year")
 
     records = load_vacations(year)
     mine = sorted((r for r in records if r["name"] == name), key=lambda r: r["start"])
@@ -268,7 +299,8 @@ with tab_me:
                 hard = team_conflicts(name, r["start"], r["end"], others_appr, RULES)
                 soft = [] if hard else record_conflicts(r, records, RULES)
                 for c in hard:
-                    c1.warning("Уже одобрено коллегам: %s. Руководитель, скорее всего, попросит перенести даты." % c)
+                    c1.warning("Конфликт с одобренными отпусками коллег: %s. Заведующий, скорее всего, "
+                               "попросит перенести даты." % c)
                 for c in soft:
                     c1.caption("⚠️ Совпадает с заявками коллег: %s — решит заведующий." % c)
             if r["status"] == PENDING and not locked:
@@ -336,7 +368,7 @@ with tab_me:
                 fmt_period_words(start, end), n_days(days),
                 " (праздничные дни не входят: %s)" % n_days(n_hol) if n_hol else ""))
             errors, warnings = validate_new_period(name, start, end, year, records, vc.entitlement(name),
-                                                   RULES, vc.MIN_LONG_PART)
+                                                   RULES, vc.MIN_LONG_PART, today=today())
             for e in errors:
                 st.error(e)
             for w in warnings:
@@ -346,7 +378,7 @@ with tab_me:
         else:
             st.info("Выберите в календаре выше первый и последний день отпуска.")
 
-        comment = st.text_input("Комментарий (необязательно)", key="comment_%d" % form_n)
+        comment = st.text_input("Комментарий (необязательно)", key="comment_%d_%s" % (form_n, name))
         confirmed = st.checkbox("Подаю заявку от имени: **%s**" % name, key="confirm_%d_%s" % (form_n, name))
 
         b1, b2 = st.columns([3, 1])
@@ -356,17 +388,21 @@ with tab_me:
             st.session_state.pick_n = pick_n + 1
             st.rerun()
         if submit:
-            # перепроверка по свежим данным — вдруг коллеге только что одобрили отпуск
-            errors, _ = validate_new_period(name, start, end, year, backend.list_vacations(year),
-                                            vc.entitlement(name), RULES, vc.MIN_LONG_PART)
+            # Перепроверка по свежим данным (вдруг коллеге только что одобрили
+            # отпуск) и запись — под одной блокировкой: двойной клик или две
+            # одновременные заявки не проскочат мимо правил.
+            with WRITE_LOCK:
+                errors, _ = validate_new_period(name, start, end, year, backend.list_vacations(year)[0],
+                                                vc.entitlement(name), RULES, vc.MIN_LONG_PART, today=today())
+                if not errors:
+                    ts = now()
+                    backend.add_vacation(new_record(name, start, end, comment.strip(), PENDING, ts))
+                    write_log(new_log(ts, year, name, "Подана заявка", fmt_period(start, end),
+                                      comment.strip(), device()))
             if errors:
                 for e in errors:
                     st.error(e)
             else:
-                ts = now()
-                backend.add_vacation(new_record(name, start, end, comment.strip(), PENDING, ts))
-                write_log(new_log(ts, year, name, "Подана заявка", fmt_period(start, end),
-                                  comment.strip(), device()))
                 st.session_state.form_n = form_n + 1
                 flash("success", "Заявка подана: %s (%s). Статус — «На рассмотрении»."
                       % (fmt_period_words(start, end), n_days(vacation_days(start, end))))
@@ -377,7 +413,11 @@ with tab_manager:
         st.write("Здесь собраны заявки всех сотрудников — доступ только для заведующего.")
         pw = st.text_input("Код доступа", type="password", key="mgr_pw_input")
         if st.button("Войти", key="mgr_login_btn"):
-            if pw == get_secret("manager_passcode", config.MANAGER_PASSCODE_FALLBACK):
+            # Запасной код из config.py — только для локального запуска; в
+            # задеплоенном приложении без manager_passcode в Secrets вход закрыт.
+            expected = get_secret("manager_passcode",
+                                  config.MANAGER_PASSCODE_FALLBACK if BACKEND_NAME == "local_csv" else None)
+            if expected and pw == expected:
                 st.session_state.manager_unlocked = True
                 st.rerun()
             else:
@@ -390,10 +430,15 @@ with tab_manager:
             st.rerun()
 
         records = load_vacations(m_year)
-        show_flash()
+        show_flash("mgr")
+        bad_rows = unreadable_rows(m_year)
+        if bad_rows:
+            st.warning("Не удалось прочитать строки в Google Таблице (лист «vacations») — они пропущены. "
+                       "Исправьте их в таблице (даты — как 2027-07-01 или 01.07.2027, статус — PENDING / "
+                       "APPROVED / REJECTED или «Одобрено» и т.п.):\n\n" + "\n".join("- " + b for b in bad_rows))
 
         # --- Контроль ---
-        submitted = {r["name"] for r in records}
+        submitted = {r["name"] for r in active(records)}  # только отклонённые — считаем «не подал»
         summaries = {n: person_summary(n, records, vc.entitlement(n), vc.MIN_LONG_PART) for n in NAMES}
         n_pending = sum(1 for r in records if r["status"] == PENDING)
         over, crowded = approved_violations(records, RULES)
@@ -418,7 +463,7 @@ with tab_manager:
             st.info("Запланировали не все дни: " + "; ".join(incomplete))
         no_long = [n for n in NAMES if n in submitted and not summaries[n]["has_long"]]
         if no_long:
-            st.warning("Нет части от %d дней: %s" % (vc.MIN_LONG_PART, ", ".join(no_long)))
+            st.warning("Нет части от %s: %s" % (n_days(vc.MIN_LONG_PART), ", ".join(no_long)))
 
         def fmt_overlap(o):
             a, b, n = o
@@ -429,7 +474,7 @@ with tab_manager:
             st.error("Среди ОДОБРЕННЫХ: пересечение основных сотрудников дольше %s:\n\n" % n_days(vc.MAX_OVERLAP_DAYS)
                      + "\n".join("- " + fmt_overlap(o) for o in over))
         if crowded:
-            st.error("Среди ОДОБРЕННЫХ: больше %s в отпуске одновременно:\n\n" % n_doctors(vc.MAX_CONCURRENT_MAIN)
+            st.error("Среди ОДОБРЕННЫХ: больше %s в отпуске одновременно:\n\n" % n_doctors_gen(vc.MAX_CONCURRENT_MAIN)
                      + "\n".join("- %s — %s" % (fmt_ranges([d for d in crowded if a <= d <= b]),
                                                 ", ".join(sorted({n for d in crowded if a <= d <= b for n in crowded[d]})))
                                  for a, b in crowded_ranges))
@@ -453,7 +498,11 @@ with tab_manager:
                 columns=["ФИО", "Даты отпуска", "Дней", "Статус", "Комментарий заведующего", "Конфликты",
                          "Комментарий сотрудника"],
             )
-            edited = st.data_editor(
+            # Форма: правки в таблице уходят одним нажатием «Сохранить», без
+            # перезапуска страницы на каждой ячейке (иначе обновление данных
+            # другим пользователем сбрасывало бы несохранённые правки).
+            form = st.form("mgr_form_%d_%d" % (m_year, st.session_state.get("editor_n", 0)), border=False)
+            edited = form.data_editor(
                 df, hide_index=True, width="stretch", key="mgr_editor_%d_%d" % (m_year, st.session_state.get("editor_n", 0)),
                 disabled=["ФИО", "Даты отпуска", "Дней", "Конфликты", "Комментарий сотрудника"],
                 column_config={
@@ -461,8 +510,7 @@ with tab_manager:
                     "Дней": st.column_config.NumberColumn(width="small"),
                 },
             )
-            c1, c2 = st.columns(2)
-            if c1.button("Сохранить изменения", type="primary", width="stretch"):
+            if form.form_submit_button("Сохранить изменения", type="primary", width="stretch"):
                 updates = editor_updates(df, edited)
                 if updates:
                     ts = now()
@@ -473,25 +521,26 @@ with tab_manager:
                                         fmt_period(by_id[i]["start"], by_id[i]["end"]),
                                         u["manager_comment"], "заведующий")
                                 for i, u in updates.items()])
-                    pairs, crowd = approved_violations(backend.list_vacations(m_year), RULES)
+                    pairs, crowd = approved_violations(backend.list_vacations(m_year)[0], RULES)
                     if pairs or crowd:
                         flash("warning", "Сохранено изменений: %d. Внимание: среди одобренных отпусков есть "
-                                         "нарушения правил — см. ниже." % len(updates))
+                                         "нарушения правил — см. ниже." % len(updates), "mgr")
                     else:
-                        flash("success", "Сохранено изменений: %d." % len(updates))
+                        flash("success", "Сохранено изменений: %d." % len(updates), "mgr")
                 else:
-                    flash("info", "Изменений нет.")
+                    flash("info", "Изменений нет.", "mgr")
                 st.session_state.editor_n = st.session_state.get("editor_n", 0) + 1
                 st.rerun()
-            if pending_ok and c2.button("Одобрить без конфликтов (%d)" % len(pending_ok), width="stretch",
-                                        help="Одобрить заявки на рассмотрении, которые ни с кем не конфликтуют. "
-                                             "Конфликтующие нужно решить вручную в таблице."):
+            if pending_ok and st.button("Одобрить без конфликтов (%d)" % len(pending_ok), width="stretch",
+                                        help="Одобрить все заявки на рассмотрении (в том числе скрытые фильтром "
+                                             "«Показать»), которые ни с кем не конфликтуют. Конфликтующие нужно "
+                                             "решить вручную в таблице."):
                 ts = now()
                 backend.update_vacations(
                     {r["id"]: {"status": APPROVED, "manager_comment": r["manager_comment"]} for r in pending_ok}, ts)
                 write_log(*[new_log(ts, m_year, r["name"], "Статус: Одобрено", fmt_period(r["start"], r["end"]),
                                     "", "заведующий") for r in pending_ok])
-                flash("success", "Одобрено заявок: %d." % len(pending_ok))
+                flash("success", "Одобрено заявок: %d." % len(pending_ok), "mgr")
                 st.session_state.editor_n = st.session_state.get("editor_n", 0) + 1
                 st.rerun()
 
@@ -506,7 +555,7 @@ with tab_manager:
         # --- Календарь ---
         st.subheader("Календарь на год")
         vacation_calendar(**manager_calendar_args(m_year, records), key="mgr_cal_%d" % m_year, default=None)
-        st.caption("Наведите на день — видно, кто в отпуске. Ниже — тот же месяц по сотрудникам.")
+        st.caption("Наведите на день — видно, кто в отпуске. Ниже — выбранный месяц по сотрудникам.")
 
         st.subheader("По сотрудникам")
         cal_month = st.selectbox("Месяц", list(range(1, 13)), format_func=lambda i: MONTH_NAMES[i - 1], key="mgr_cal_month")
@@ -535,7 +584,8 @@ with tab_manager:
 
         def header_style(col):
             d = dates[cols.index(col.name)]
-            base = "background-color:#F4B183" if is_holiday(d) else "background-color:#E7E6E6" if d.weekday() >= 5 else ""
+            # как в календаре: выходные — красный шрифт, праздники — оранжевый (серый = «недоступно»)
+            base = "color:#D35400;font-weight:bold" if is_holiday(d) else "color:#C0392B" if d.weekday() >= 5 else ""
             out = []
             for row, v in zip(col.index, col):
                 if row == ROW_APPR:
@@ -548,9 +598,9 @@ with tab_manager:
 
         st.dataframe(cal.style.apply(header_style, axis=0), width="stretch",
                      column_config={c: st.column_config.TextColumn(width=36) for c in cols})
-        st.caption("От (зелёный) — одобрено, ? (розовый) — подана заявка. Серым — выходные, оранжевым — "
-                   "праздники. Красным в строке «%s» — нарушение среди одобренных: пересечение дольше %s "
-                   "или больше %s в отпуске." % (ROW_APPR, n_days(vc.MAX_OVERLAP_DAYS), n_doctors(vc.MAX_CONCURRENT_MAIN)))
+        st.caption("От (зелёный) — одобрено, ? (розовый) — подана заявка. Красным шрифтом — выходные, "
+                   "оранжевым — праздники. Красной заливкой в строке «%s» — нарушение среди одобренных: пересечение дольше %s "
+                   "или больше %s в отпуске." % (ROW_APPR, n_days(vc.MAX_OVERLAP_DAYS), n_doctors_gen(vc.MAX_CONCURRENT_MAIN)))
 
         st.download_button(
             "Скачать график отпусков (Excel)",

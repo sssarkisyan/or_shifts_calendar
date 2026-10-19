@@ -3,14 +3,32 @@
 пожеланий. Одна строка таблицы = один период отпуска."""
 import csv
 import datetime
+import functools
 import os
+import threading
 import uuid
 
 from secrets_util import has_secret_section
-from vacation_logic import vacation_days
+from vacation_logic import STATUS_LABELS, vacation_days
 
 HEADER = ["ID", "ФИО", "Год", "Начало", "Конец", "Дней", "Статус",
-          "Комментарий сотрудника", "Комментарий руководителя", "Подано", "Обновлено"]
+          "Комментарий сотрудника", "Комментарий заведующего", "Подано", "Обновлено"]
+# Старые названия колонок, которые ещё могут стоять в таблице.
+HEADER_ALIASES = {"Комментарий руководителя": "Комментарий заведующего"}
+
+# Все записи — под одной блокировкой: удаление и смена статуса ищут строку по
+# номеру, и без блокировки одновременные действия двух людей могли бы попасть
+# не в ту строку. Streamlit Cloud — один процесс, этого достаточно. RLock —
+# чтобы приложение могло держать её вокруг «проверить и записать».
+WRITE_LOCK = threading.RLock()
+
+
+def _locked(method):
+    @functools.wraps(method)
+    def wrapper(*args, **kwargs):
+        with WRITE_LOCK:
+            return method(*args, **kwargs)
+    return wrapper
 WORKSHEET_NAME = "vacations"
 LOCAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_vacations.csv")
 
@@ -22,16 +40,61 @@ LOG_WORKSHEET_NAME = "vacation_log"
 LOCAL_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_vacation_log.csv")
 
 
+def _parse_date(value):
+    """2027-07-01 (как пишет приложение) или 01.07.2027 (если дату поправили
+    в таблице руками)."""
+    value = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.datetime.strptime(value, fmt).date()
+        except ValueError:
+            pass
+    raise ValueError("непонятная дата «%s»" % value)
+
+
+_STATUS_FROM_TEXT = dict({code: code for code in STATUS_LABELS},
+                         **{label.lower(): code for code, label in STATUS_LABELS.items()})
+
+
 def _to_record(row):
-    start = datetime.date.fromisoformat(str(row["Начало"]))
-    end = datetime.date.fromisoformat(str(row["Конец"]))
+    start, end = _parse_date(row["Начало"]), _parse_date(row["Конец"])
+    status = _STATUS_FROM_TEXT.get(str(row["Статус"]).strip()) or _STATUS_FROM_TEXT.get(str(row["Статус"]).strip().lower())
+    if not status:
+        raise ValueError("непонятный статус «%s»" % row["Статус"])
+    if end < start:
+        raise ValueError("конец раньше начала")
     return {
-        "id": str(row["ID"]), "name": row["ФИО"], "year": int(row["Год"]),
+        "id": str(row["ID"]), "name": row["ФИО"], "year": start.year,
         "start": start, "end": end, "days": vacation_days(start, end),
-        "status": row["Статус"], "comment": row["Комментарий сотрудника"],
-        "manager_comment": row["Комментарий руководителя"],
+        "status": status, "comment": row["Комментарий сотрудника"],
+        "manager_comment": row["Комментарий заведующего"],
         "created": row["Подано"], "updated": row["Обновлено"],
     }
+
+
+def _parse_rows(rows, year):
+    """(заявки за год, [описания строк, которые не удалось прочитать]).
+    Испорченная вручную строка не роняет приложение — её пропускаем, а
+    заведующий видит предупреждение."""
+    records, bad = [], []
+    for i, row in enumerate(rows, start=2):  # строка 1 — заголовок
+        try:
+            rec = _to_record(row)
+        except (ValueError, KeyError) as e:
+            if str(row.get("Год", "")).strip() in ("", str(year)):
+                bad.append("строка %d (%s): %s" % (i, row.get("ФИО", "?") or "?", e))
+            continue
+        if rec["year"] == year:
+            records.append(rec)
+    return records, bad
+
+
+def _rows_from_values(values):
+    """get_all_values() → список словарей по заголовкам (со старыми названиями колонок)."""
+    if not values:
+        return []
+    header = [HEADER_ALIASES.get(h, h) for h in values[0]]
+    return [dict(zip(header, row + [""] * (len(header) - len(row)))) for row in values[1:] if any(row)]
 
 
 def _to_row(rec):
@@ -67,7 +130,7 @@ class _LocalBackend:
         if not os.path.exists(path):
             return []
         with open(path, newline="", encoding="utf-8") as f:
-            return list(csv.DictReader(f))
+            return _rows_from_values(list(csv.reader(f)))
 
     def _write(self, rows, path=LOCAL_FILE, header=HEADER):
         with open(path, "w", newline="", encoding="utf-8") as f:
@@ -75,6 +138,7 @@ class _LocalBackend:
             w.writeheader()
             w.writerows(rows)
 
+    @_locked
     def add_log(self, entries):
         rows = self._read(LOCAL_LOG_FILE)
         rows += [dict(zip(LOG_HEADER, _log_row(e))) for e in entries]
@@ -84,16 +148,19 @@ class _LocalBackend:
         return [_to_log(r) for r in self._read(LOCAL_LOG_FILE) if str(r["Год"]) == str(year)]
 
     def list_vacations(self, year):
-        return [_to_record(r) for r in self._read() if str(r["Год"]) == str(year)]
+        return _parse_rows(self._read(), year)
 
+    @_locked
     def add_vacation(self, rec):
         rows = self._read()
         rows.append(dict(zip(HEADER, _to_row(rec))))
         self._write(rows)
 
+    @_locked
     def delete_vacation(self, rec_id):
         self._write([r for r in self._read() if r["ID"] != rec_id])
 
+    @_locked
     def update_vacations(self, updates, timestamp):
         """updates: {id: {"status": .., "manager_comment": ..}}"""
         rows = self._read()
@@ -101,7 +168,7 @@ class _LocalBackend:
             u = updates.get(r["ID"])
             if u:
                 r["Статус"] = u["status"]
-                r["Комментарий руководителя"] = u["manager_comment"]
+                r["Комментарий заведующего"] = u["manager_comment"]
                 r["Обновлено"] = timestamp
         self._write(rows)
 
@@ -133,6 +200,7 @@ class _SheetsBackend:
             ws.append_row(header, value_input_option="RAW")
             return ws
 
+    @_locked
     def add_log(self, entries):
         if entries:
             self._ws(LOG_WORKSHEET_NAME, LOG_HEADER).append_rows(
@@ -143,34 +211,33 @@ class _SheetsBackend:
         rows = ws.get_all_records(expected_headers=LOG_HEADER, numericise_ignore=["all"])
         return [_to_log(r) for r in rows if str(r["Год"]) == str(year)]
 
-    def _rows(self, ws):
-        # numericise_ignore: ID (hex) и даты должны остаться строками.
-        return ws.get_all_records(expected_headers=HEADER, numericise_ignore=["all"])
-
     def list_vacations(self, year):
-        return [_to_record(r) for r in self._rows(self._ws()) if str(r["Год"]) == str(year)]
+        return _parse_rows(_rows_from_values(self._ws().get_all_values()), year)
 
+    @_locked
     def add_vacation(self, rec):
         self._ws().append_row(_to_row(rec), value_input_option="RAW")
 
+    @_locked
     def delete_vacation(self, rec_id):
         ws = self._ws()
         ids = ws.col_values(1)
         if rec_id in ids:
             ws.delete_rows(ids.index(rec_id) + 1)
 
+    @_locked
     def update_vacations(self, updates, timestamp):
         ws = self._ws()
         ids = ws.col_values(1)
         a1 = self._gspread.utils.rowcol_to_a1
-        cols = {f: HEADER.index(f) + 1 for f in ("Статус", "Комментарий руководителя", "Обновлено")}
+        cols = {f: HEADER.index(f) + 1 for f in ("Статус", "Комментарий заведующего", "Обновлено")}
         batch = []
         for rec_id, u in updates.items():
             if rec_id not in ids:
                 continue
             row = ids.index(rec_id) + 1
             for field, value in (("Статус", u["status"]),
-                                 ("Комментарий руководителя", u["manager_comment"]),
+                                 ("Комментарий заведующего", u["manager_comment"]),
                                  ("Обновлено", timestamp)):
                 batch.append({"range": a1(row, cols[field]), "values": [[value]]})
         if batch:
