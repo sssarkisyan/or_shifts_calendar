@@ -233,24 +233,6 @@ def bad_days(records, rules):
     return out
 
 
-def assign_lanes(records):
-    """{id заявки: номер дорожки} — как в Google Календаре: каждая заявка —
-    своя полоска, пересекающиеся заявки получают разные дорожки, свободная
-    дорожка переиспользуется. Дорожек ровно столько, сколько заявок
-    максимально пересекается в один день."""
-    lanes, lane_end = {}, []  # lane_end[i] — последний занятый день дорожки i
-    for r in sorted(records, key=lambda r: (r["start"], r["end"], r["name"])):
-        for i, last in enumerate(lane_end):
-            if last < r["start"]:
-                lane_end[i] = r["end"]
-                lanes[r["id"]] = i
-                break
-        else:
-            lanes[r["id"]] = len(lane_end)
-            lane_end.append(r["end"])
-    return lanes
-
-
 def team_calendar(records, names, exclude_name=None):
     """{дата: {"approved": [ФИО], "pending": [ФИО]}} — отпуска сотрудников из
     names (кроме exclude_name) по дням."""

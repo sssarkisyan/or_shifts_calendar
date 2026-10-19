@@ -5,55 +5,68 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Календарь отпусков</title>
 <!--
-  Кликабельный годовой календарь — компонент Streamlit без сборки (см.
+  Годовой календарь отпусков — компонент Streamlit без сборки (см.
   vacation_app.py → vacation_calendar). Протокол обмена со Streamlit —
   postMessage: componentReady / render / setComponentValue / setFrameHeight.
-  Аргументы: year, days {iso: {c: классы, t: подсказка, b: полоски}},
-  blocked [iso], selected {start, end}, selectable, legend [[стиль, текст]],
-  bar_colors {p, a}. Полоска — [дорожка, "a"|"p", начало?, конец?]: каждая
-  заявка коллеги рисуется своей полоской под числом (как в Google Календаре).
-  Значение: {start, end, n} — n растёт с каждым кликом, чтобы повторный
-  выбор тех же дат тоже доходил до Streamlit.
+
+  Аргументы: year; days {iso: {c: CSS-классы, r: [id заявок в этот день]}};
+  reqs {id: {s: начало, e: конец, t: текст}}; blocked [iso]; selected
+  {start, end}; selectable; legend [[стиль или [стили], текст]].
+
+  Заливка дня — плотность (сколько коллег в отпуске). Наведение на день (на
+  телефоне — касание) обводит пунктиром отпуска этих коллег целиком и
+  показывает подсказку: кто, статус, даты.
+
+  Если selectable — клики выбирают даты: первый — начало, второй — конец,
+  клик раньше начала — новое начало, третий — новый выбор. Значение:
+  {start, end, n} — n растёт с каждым кликом, чтобы повторный выбор тех же
+  дат тоже доходил до Streamlit.
 -->
 <style>
   :root { --text: #31333F; --sel: #2F6FDE; --range: #DCE7FB; }
   html, body { margin: 0; padding: 0; background: transparent; color: var(--text);
                font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #root { position: relative; }
   .vc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin: 4px 0 8px; }
   .vc-month h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
   .vc-month table { border-collapse: separate; border-spacing: 2px; width: 100%; font-size: 12px; }
   .vc-month th { font-weight: 500; opacity: .6; text-align: center; padding: 0; }
-  .vc-month td { text-align: center; vertical-align: top; height: 24px; border-radius: 4px; padding: 3px 0 0;
-                 cursor: default; user-select: none; }
-  .vc-bars { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; padding-bottom: 3px; }
-  .vc-bar { height: 4px; margin: 0 -1px; }
-  .vc-bar.s { margin-left: 3px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
-  .vc-bar.e { margin-right: 3px; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
-  .vc-more { font-size: 9px; line-height: 9px; opacity: .7; }
+  .vc-month td { text-align: center; height: 26px; border-radius: 4px; padding: 0; cursor: default; user-select: none;
+                 -webkit-tap-highlight-color: transparent; }
   .vc-click td.vc-day { cursor: pointer; }
-  .vc-click td.vc-day:hover { box-shadow: inset 0 0 0 2px var(--sel); }
   .vc-click td.vc-blocked { cursor: not-allowed; }
   .vc-wk { color: #C0392B; }
   .vc-hol { color: #D35400; font-weight: 700; }
+  /* плотность: 1 / 2 / 3+ коллег; розовая — есть поданные, зелёная — всё одобрено */
+  .vc-p1 { background: #FBE3E8; } .vc-p2 { background: #F5B9C6; } .vc-p3 { background: #EC8CA2; color: #fff; font-weight: 600; }
+  .vc-a1 { background: #E0F2E5; } .vc-a2 { background: #B5DFC0; } .vc-a3 { background: #7FC492; color: #fff; font-weight: 600; }
+  .vc-p1, .vc-p2, .vc-a1, .vc-a2 { color: #222; }
   .vc-full { background: #BDBDBD; color: #555; text-decoration: line-through; }
   .vc-bad { background: #FF7C80; color: #222; font-weight: 700; }
   .vc-mine { box-shadow: inset 0 0 0 2px var(--sel); font-weight: 700; }
   td.vc-range { background: var(--range); color: #222; }
   td.vc-end { background: var(--sel); color: #fff; font-weight: 700; }
+  td.vc-ctr { outline: 2px dashed #3B3F4A; outline-offset: -2px; }
   .vc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; margin-bottom: 6px; }
-  .vc-legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+  .vc-legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 2px; }
+  .vc-legend .sw:last-of-type { margin-right: 6px; }
+  #pop { position: absolute; z-index: 5; display: none; max-width: 300px; padding: 7px 10px; border-radius: 6px;
+         background: #262730; color: #fff; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+         pointer-events: none; white-space: pre-line; }
+  #pop b { font-weight: 600; }
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div id="cal"></div><div id="pop"></div></div>
 <script>
 (function () {
   var MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
                 "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+  var MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+                    "августа", "сентября", "октября", "ноября", "декабря"];
   var DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-  var MAX_LANES = 4;  // больше полосок в ячейку не помещается — остальное «+N»
-  var args = null, sel = { start: null, end: null }, hover = null, clicks = 0;
-  var root = document.getElementById("root");
+  var args = null, sel = { start: null, end: null }, hover = null, focus = null, clicks = 0;
+  var root = document.getElementById("root"), calEl = document.getElementById("cal"), pop = document.getElementById("pop");
 
   function send(type, extra) {
     var msg = { isStreamlitMessage: true, type: type };
@@ -66,39 +79,35 @@
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   }
+  function dayInfo(day) { return (args.days || {})[day] || {}; }
   function inSelection(day) {
     if (!sel.start) return false;
     var end = sel.end || (hover && hover >= sel.start ? hover : null);
     return end ? day >= sel.start && day <= end : day === sel.start;
   }
   function isEnd(day) { return day === sel.start || day === sel.end; }
-
-  function bars(list, lanes, colors) {
-    if (!lanes) return "";
-    var byLane = {}, more = 0;
-    list.forEach(function (b) { if (b[0] < lanes) byLane[b[0]] = b; else more += 1; });
-    var h = ['<div class="vc-bars">'];
-    for (var i = 0; i < lanes; i++) {
-      var b = byLane[i];
-      if (i === lanes - 1 && more) { h.push('<div class="vc-more">+' + (more + (b ? 1 : 0)) + "</div>"); break; }
-      h.push(b ? '<div class="vc-bar' + (b[2] ? " s" : "") + (b[3] ? " e" : "") + '" style="background:'
-                 + colors[b[1]] + '"></div>'
-               : '<div class="vc-bar" style="visibility:hidden"></div>');
-    }
-    h.push("</div>");
-    return h.join("");
+  // отпуска коллег, которые в отпуске в день focus — их обводим целиком
+  function contourRanges() {
+    if (!focus) return [];
+    return (dayInfo(focus).r || []).map(function (id) { return (args.reqs || {})[id]; }).filter(Boolean);
+  }
+  function inContour(day, ranges) {
+    for (var i = 0; i < ranges.length; i++) if (day >= ranges[i].s && day <= ranges[i].e) return true;
+    return false;
   }
 
   function render() {
     if (!args) return;
-    var colors = args.bar_colors || { p: "#E9899D", a: "#5DB075" };
     var blocked = {};
     (args.blocked || []).forEach(function (d) { blocked[d] = true; });
+    var ranges = contourRanges();
     var h = [];
     if (args.legend && args.legend.length) {
       h.push('<div class="vc-legend">');
       args.legend.forEach(function (l) {
-        h.push('<span><span class="sw" style="' + esc(l[0]) + '"></span>' + esc(l[1]) + "</span>");
+        var styles = Array.isArray(l[0]) ? l[0] : [l[0]];
+        h.push("<span>" + styles.map(function (st) { return '<span class="sw" style="' + esc(st) + '"></span>'; }).join("")
+               + esc(l[1]) + "</span>");
       });
       h.push("</div>");
     }
@@ -106,48 +115,49 @@
     for (var m = 0; m < 12; m++) {
       h.push('<div class="vc-month"><h4>' + MONTHS[m] + "</h4><table><tr>");
       DOW.forEach(function (d) { h.push("<th>" + d + "</th>"); });
-      h.push("</tr>");
+      h.push("</tr><tr>");
       var first = (new Date(args.year, m, 1).getDay() + 6) % 7;  // Пн = 0
       var n = new Date(args.year, m + 1, 0).getDate();
-      var cells = [];
-      for (var i = 0; i < first; i++) cells.push(null);
-      for (var d = 1; d <= n; d++) cells.push(d);
-      for (var w = 0; w < cells.length; w += 7) {
-        var week = cells.slice(w, w + 7), infos = week.map(function (d) {
-          return d ? ((args.days || {})[iso(args.year, m, d)] || {}) : {};
-        });
-        // Полоски нумеруются по неделе: только дорожки, которые есть в этой
-        // неделе, в том же порядке — неделя без заявок остаётся компактной.
-        var used = {};
-        infos.forEach(function (info) { (info.b || []).forEach(function (b) { used[b[0]] = true; }); });
-        var order = Object.keys(used).map(Number).sort(function (a, b) { return a - b; }), rank = {};
-        order.forEach(function (lane, i) { rank[lane] = i; });
-        var rowLanes = Math.min(order.length, MAX_LANES);
-        h.push("<tr>");
-        week.forEach(function (d, i) {
-          if (!d) { h.push("<td></td>"); return; }
-          var key = iso(args.year, m, d), info = infos[i];
-          var cls = ["vc-day"].concat(info.c ? [info.c] : []);
-          if (blocked[key]) cls.push("vc-blocked");
-          if (args.selectable && inSelection(key)) cls.push(isEnd(key) ? "vc-end" : "vc-range");
-          var list = (info.b || []).map(function (b) { return [rank[b[0]], b[1], b[2], b[3]]; });
-          h.push('<td class="' + cls.join(" ") + '" data-d="' + key + '" title="' + esc(info.t || "") + '">' + d
-                 + bars(list, rowLanes, colors) + "</td>");
-        });
-        for (var k = week.length; k < 7; k++) h.push("<td></td>");
-        h.push("</tr>");
+      for (var i = 0; i < first; i++) h.push("<td></td>");
+      for (var d = 1; d <= n; d++) {
+        var key = iso(args.year, m, d), info = dayInfo(key);
+        var cls = ["vc-day"].concat(info.c ? [info.c] : []);
+        if (blocked[key]) cls.push("vc-blocked");
+        if (args.selectable && inSelection(key)) cls.push(isEnd(key) ? "vc-end" : "vc-range");
+        if (inContour(key, ranges)) cls.push("vc-ctr");
+        h.push('<td class="' + cls.join(" ") + '" data-d="' + key + '">' + d + "</td>");
+        if ((first + d) % 7 === 0 && d < n) h.push("</tr><tr>");
       }
-      h.push("</table></div>");
+      h.push("</tr></table></div>");
     }
     h.push("</div>");
-    root.innerHTML = h.join("");
-    send("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight });
+    calEl.innerHTML = h.join("");
+    showPopup();
+    send("streamlit:setFrameHeight", { height: calEl.scrollHeight + 8 });
+  }
+
+  function showPopup() {
+    var ids = focus ? (dayInfo(focus).r || []) : [];
+    var td = focus && calEl.querySelector('td[data-d="' + focus + '"]');
+    if (!ids.length || !td) { pop.style.display = "none"; return; }
+    var p = focus.split("-");
+    pop.innerHTML = "<b>" + Number(p[2]) + " " + MONTHS_GEN[Number(p[1]) - 1] + "</b>\n"
+      + ids.map(function (id) { return esc((args.reqs || {})[id] ? args.reqs[id].t : ""); }).join("\n");
+    pop.style.display = "block";
+    var r = td.getBoundingClientRect(), base = root.getBoundingClientRect();
+    var left = Math.min(Math.max(r.left - base.left - 8, 0), Math.max(base.width - pop.offsetWidth, 0));
+    var below = r.bottom - base.top + 4, above = r.top - base.top - pop.offsetHeight - 4;
+    // не вылезать за низ календаря (высота фрейма = высоте календаря)
+    pop.style.top = (below + pop.offsetHeight <= calEl.scrollHeight || above < 0 ? below : above) + "px";
+    pop.style.left = left + "px";
   }
 
   root.addEventListener("click", function (e) {
     var td = e.target.closest("td[data-d]");
-    if (!td || !args || !args.selectable || td.classList.contains("vc-blocked")) return;
+    if (!td || !args) return;
     var day = td.getAttribute("data-d");
+    focus = day;  // на телефоне касание = наведение: контур и подсказка
+    if (!args.selectable || td.classList.contains("vc-blocked")) { render(); return; }
     if (!sel.start || sel.end) {
       sel = { start: day, end: null };          // новый выбор: начало отпуска
     } else if (day < sel.start) {
@@ -162,9 +172,13 @@
   });
   root.addEventListener("mouseover", function (e) {
     var td = e.target.closest("td[data-d]");
-    if (!td || !args || !args.selectable || !sel.start || sel.end) return;
+    if (!td || !args) return;
     var day = td.getAttribute("data-d");
-    if (day !== hover) { hover = day; render(); }
+    var newHover = args.selectable && sel.start && !sel.end ? day : null;
+    if (day !== focus || newHover !== hover) { focus = day; hover = newHover; render(); }
+  });
+  root.addEventListener("mouseleave", function () {
+    if (focus || hover) { focus = null; hover = null; render(); }
   });
 
   window.addEventListener("message", function (e) {
@@ -180,7 +194,7 @@
     render();
   });
   window.addEventListener("resize", function () {
-    send("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight });
+    send("streamlit:setFrameHeight", { height: calEl.scrollHeight + 8 });
   });
   send("streamlit:componentReady", { apiVersion: 1 });
 })();
