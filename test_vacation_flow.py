@@ -275,7 +275,11 @@ check(prof not in calendar_html(), "основной врач не видит з
 pick(D(Y, 3, 1), D(Y, 3, 14))
 check(not any("поданы заявки" in w.value for w in at.warning), "отпуск профессора не создаёт конфликтов для основных")
 as_employee(part_timer)
-check(me in calendar_html(), "совместитель по-прежнему видит отпуска основных")
+pt_cal = json.loads(calendar_html())
+check(not pt_cal["reqs"] and not any(d.get("r") for d in pt_cal["days"].values()),
+      "совместитель не видит чужих отпусков")
+check([l[1] for l in pt_cal["legend"]] == ["мои отпуска"], "легенда совместителя — только свои отпуска")
+check(not any("кто из коллег" in c.value for c in at.caption), "подсказка совместителю — без «кто из коллег»")
 
 # нарушение среди одобренных видно руководителю
 backend.add_vacation(rec(colleague4, D(Y, 7, 5), D(Y, 7, 6), APPROVED))

@@ -109,11 +109,12 @@ C_PENDING, C_APPROVED, C_FULL, C_BAD = "#F9D5DC", "#CDEBD3", "#BDBDBD", "#FF7C80
 
 
 def visible_colleagues(me):
-    """Чьи отпуска сотрудник видит в календаре — коллеги из его группы CALENDAR_GROUPS."""
+    """Чьи отпуска сотрудник видит в календаре — коллеги из его группы
+    CALENDAR_GROUPS. Кто ни в одну группу не входит (совместители,
+    договорники) — ничьих: ограничений по датам у них нет, чужие отпуска им
+    не нужны."""
     groups = [g for g in vc.CALENDAR_GROUPS if KIND[me] in g]
-    if not groups:  # совместители/договорники — видят основных врачей
-        return set(RULES.main_names) - {me}
-    kinds = set().union(*groups)
+    kinds = set().union(*groups) if groups else set()
     return {n for n, k in KIND.items() if k in kinds and n != me}
 
 
@@ -165,12 +166,15 @@ DENSITY_PENDING = ["#FBE3E8", "#F5B9C6", "#EC8CA2"]
 DENSITY_APPROVED = ["#E0F2E5", "#B5DFC0", "#7FC492"]
 
 
-def legend(full=False, bad=False, mine=False, colleagues=True):
-    """[[стиль или список стилей образцов, текст], ...]"""
+def legend(full=False, bad=False, mine=False, colleagues=True, others=True):
+    """[[стиль или список стилей образцов, текст], ...]; others=False — чужих
+    отпусков в календаре нет, легенда только про свои."""
     who = "коллег" if colleagues else "сотрудников"
     items = []
     if mine:
         items.append(["box-shadow:inset 0 0 0 2px #2F6FDE", "мои отпуска"])
+    if not others:
+        return items
     items += [[["background:%s" % c for c in DENSITY_PENDING], "1 · 2 · 3+ %s, есть поданные заявки" % who],
               [["background:%s" % c for c in DENSITY_APPROVED], "1 · 2 · 3+ %s, всё одобрено" % who]]
     if full:
@@ -192,11 +196,12 @@ def employee_calendar_args(year, records, me, selected):
     выбрать началом или концом отпуска."""
     is_main = me in RULES.main_names
     full = closed_days(records, exclude_name=me) if is_main else set()
+    colleagues = visible_colleagues(me)
     days, reqs = calendar_data(
-        year, [r for r in active(records) if r["name"] in visible_colleagues(me)], full=full,
+        year, [r for r in active(records) if r["name"] in colleagues], full=full,
         mine={d for r in active(records) if r["name"] == me for d in daterange(r["start"], r["end"])})
     return dict(year=year, selectable=True, selected=selected, blocked=sorted(d.isoformat() for d in full),
-                days=days, reqs=reqs, legend=legend(full=is_main, mine=True))
+                days=days, reqs=reqs, legend=legend(full=is_main, mine=True, others=bool(colleagues)))
 
 
 def manager_calendar_args(year, records):
@@ -309,9 +314,9 @@ with tab_me:
         start = datetime.date.fromisoformat(sel["start"]) if sel.get("start") else None
         end = datetime.date.fromisoformat(sel["end"]) if sel.get("end") else None
 
-        st.caption("Кликните в календаре на первый, а затем на последний день отпуска. "
-                   "Наведение курсора на конкретный день — покажет, кто из коллег в отпуске "
-                   "(на телефоне — коснитесь дня).")
+        st.caption("Кликните в календаре на первый, а затем на последний день отпуска."
+                   + (" Наведение курсора на конкретный день — покажет, кто из коллег в отпуске "
+                      "(на телефоне — коснитесь дня)." if visible_colleagues(name) else ""))
         vacation_calendar(
             **employee_calendar_args(year, records, name, {"start": sel.get("start"), "end": sel.get("end")}),
             key=cal_key, default=None,
