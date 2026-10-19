@@ -299,7 +299,7 @@ BOLD = Font(bold=True)
 CENTER = Alignment(horizontal="center", vertical="center")
 
 
-def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_long_part):
+def build_excel(year, staff, records, entitlement_fn, rules, min_long_part):
     """Свод + 12 листов-календарей + список всех заявок. Возвращает bytes .xlsx."""
     wb = Workbook()
     names = [s["name"] for s in staff]
@@ -307,7 +307,7 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
     # --- Свод ---
     ws = wb.active
     ws.title = "Свод"
-    ws.append(["ФИО", "Остаток за прошлый год", "Положено всего", "Запланировано", "Одобрено", "На рассмотрении",
+    ws.append(["ФИО", "Положено", "Запланировано", "Одобрено", "На рассмотрении",
                "Осталось", "Есть часть от %s" % n_days(min_long_part), "Отпуска"])
     for c in ws[1]:
         c.font = BOLD
@@ -317,17 +317,17 @@ def build_excel(year, staff, records, entitlement_fn, carryover_fn, rules, min_l
             "%s (%s, %s)" % (fmt_period(r["start"], r["end"]), n_days(r["days"]), STATUS_LABELS[r["status"]].lower())
             for r in sorted(records, key=lambda r: r["start"]) if r["name"] == name
         )
-        ws.append([name, carryover_fn(name), s["entitlement"], s["planned"], s["approved"], s["pending"],
+        ws.append([name, s["entitlement"], s["planned"], s["approved"], s["pending"],
                    s["entitlement"] - s["planned"], "да" if s["has_long"] else "нет", periods])
         row = ws.max_row
         if s["planned"] < s["entitlement"]:
-            ws.cell(row, 7).fill = FILL_TODO
+            ws.cell(row, 6).fill = FILL_TODO
         if not s["has_long"]:
-            ws.cell(row, 8).fill = FILL_BAD
+            ws.cell(row, 7).fill = FILL_BAD
     ws.column_dimensions["A"].width = 36
-    for col in "BCDEFGH":
+    for col in "BCDEFG":
         ws.column_dimensions[col].width = 14
-    ws.column_dimensions["I"].width = 90
+    ws.column_dimensions["H"].width = 90
     ws.append([])
     ws.append(["Обозначения в календарях:"])
     for label, fill in [("Одобрено", FILL_APPROVED), ("На рассмотрении", FILL_PENDING),

@@ -604,7 +604,7 @@ with tab_manager:
 
         st.download_button(
             "Скачать график отпусков (Excel)",
-            data=build_excel(m_year, STAFF, records, vc.entitlement, vc.carryover,
+            data=build_excel(m_year, STAFF, records, vc.entitlement,
                              RULES, vc.MIN_LONG_PART),
             file_name="grafik_otpuskov_%d.xlsx" % m_year,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

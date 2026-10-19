@@ -347,9 +347,13 @@ refresh()
 
 # --- Excel ---
 recs = backend.list_vacations(Y)[0]
-xlsx = build_excel(Y, config.STAFF, recs, vc.entitlement, vc.carryover, RULES, vc.MIN_LONG_PART)
+xlsx = build_excel(Y, config.STAFF, recs, vc.entitlement, RULES, vc.MIN_LONG_PART)
 wb = load_workbook(io.BytesIO(xlsx))
 check(wb.sheetnames[0] == "Свод" and "Июль" in wb.sheetnames and "Заявки" in wb.sheetnames, "листы Excel")
+svod_header = [c.value for c in wb["Свод"][1]]
+check(svod_header[:3] == ["ФИО", "Положено", "Запланировано"] and not any("Остаток" in str(h) for h in svod_header),
+      "Excel «Свод»: без колонки остатка")
+check([c.value for c in wb["Свод"][2]][1] == 31, "Excel «Свод»: положено 31 день")
 jul = wb["Июль"]
 row = [r for r in jul.iter_rows(values_only=True) if r[0] == me][0]
 check(row[1:15] == ("От",) * 14 and row[15] is None, "календарь июля: 1–14 «От»")
