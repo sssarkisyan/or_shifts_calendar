@@ -1,5 +1,5 @@
 """Скриптовая проверка портала отпусков — не часть приложения, только для
-разработки. Прогоняет: подсчёт дней с праздниками, правила (лимит дней 31 +
+разработки. Прогоняет: подсчёт дней (все календарные, праздники входят), правила (лимит дней 31 +
 остаток, часть ≥14 дней, пересечение основных ≤7 дн., не больше 2 основных
 одновременно — блокируют только одобренные отпуска коллег, поданные лишь
 предупреждают), подачу/удаление через UI, календарь, согласование, Excel."""
@@ -41,9 +41,9 @@ names = [s["name"] for s in config.STAFF]
 me = names[3]
 
 # --- подсчёт дней ---
-check(vacation_days(D(2027, 1, 1), D(2027, 1, 14)) == 6, "1–14 января 2027: 14 кал. дней − 8 праздников = 6")
-check(vacation_days(D(2027, 7, 1), D(2027, 7, 14)) == 14, "июль без праздников: 14 дней")
-check(vacation_days(D(2027, 6, 7), D(2027, 6, 20)) == 13, "12 июня внутри периода не считается")
+check(vacation_days(D(2027, 1, 1), D(2027, 1, 14)) == 14, "1–14 января 2027: праздники входят — 14 дней")
+check(vacation_days(D(2027, 7, 1), D(2027, 7, 14)) == 14, "июль: 14 дней")
+check(vacation_days(D(2027, 6, 7), D(2027, 6, 20)) == 14, "12 июня внутри отпуска тоже считается")
 
 
 def rec(name, a, b, status=PENDING):
@@ -317,6 +317,22 @@ check(editor_updates(orig, edit) == {"b": {"status": REJECTED, "manager_comment"
 edit2 = orig.copy()
 edit2.at["a", "Комментарий заведующего"] = None
 check(editor_updates(orig, edit2) == {}, "очищенная пустая ячейка не считается изменением")
+
+# --- превышение лимита (например, заявки поданы до смены правила подсчёта) ---
+backend.add_vacation(rec(colleague4, D(Y, 12, 1), D(Y, 12, 31)))
+backend.add_vacation(rec(colleague4, D(Y, 11, 20), D(Y, 11, 20)))  # 31 + 1 = 32
+refresh()
+total4 = sum(r["days"] for r in backend.list_vacations(Y)[0] if r["name"] == colleague4 and r["status"] != REJECTED)
+check(total4 > 31, "sanity: у коллеги больше 31 дня")
+check(any("Запланировано больше положенного" in w.value and "%s (%d из 31)" % (colleague4, total4) in w.value
+          for w in at.warning), "заведующий видит превышение лимита")
+as_employee(colleague4)
+from vacation_logic import n_days as _nd
+check(any("Запланировано на %s больше положенного" % _nd(total4 - 31) in w.value for w in at.warning),
+      "сотрудник видит превышение")
+ids4 = [r["id"] for r in backend.list_vacations(Y)[0] if r["name"] == colleague4 and r["start"].month in (11, 12)]
+backend._write([r for r in backend._read() if r["ID"] not in ids4])
+refresh()
 
 # --- прошедшие даты, падежи ---
 from vacation_logic import n_doctors_gen

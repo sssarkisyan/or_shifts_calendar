@@ -279,6 +279,9 @@ with tab_me:
     m3.metric("Осталось", s["entitlement"] - s["planned"])
     if vc.carryover(name):
         st.caption("Положено: %s за год + %s остатка за прошлый год." % (n_days(vc.BASE_DAYS), n_days(vc.carryover(name))))
+    if s["planned"] > s["entitlement"]:
+        st.warning("Запланировано на %s больше положенного — сократите или удалите один из отпусков "
+                   "(одобренный — через заведующего)." % n_days(s["planned"] - s["entitlement"]))
     if mine and not s["has_long"]:
         st.warning("Пока нет ни одной части отпуска от %s — она обязательна (ст. 125 ТК РФ)." % n_days(vc.MIN_LONG_PART))
 
@@ -363,10 +366,7 @@ with tab_me:
         errors = []
         if start and end:
             days = vacation_days(start, end)
-            n_hol = (end - start).days + 1 - days
-            st.markdown("**Выбрано:** %s — %s отпуска%s" % (
-                fmt_period_words(start, end), n_days(days),
-                " (праздничные дни не входят: %s)" % n_days(n_hol) if n_hol else ""))
+            st.markdown("**Выбрано:** %s — %s отпуска" % (fmt_period_words(start, end), n_days(days)))
             errors, warnings = validate_new_period(name, start, end, year, records, vc.entitlement(name),
                                                    RULES, vc.MIN_LONG_PART, today=today())
             for e in errors:
@@ -461,6 +461,10 @@ with tab_manager:
                       for n in NAMES if n in submitted and summaries[n]["planned"] < summaries[n]["entitlement"]]
         if incomplete:
             st.info("Запланировали не все дни: " + "; ".join(incomplete))
+        over_limit = ["%s (%d из %d)" % (n, summaries[n]["planned"], summaries[n]["entitlement"])
+                      for n in NAMES if summaries[n]["planned"] > summaries[n]["entitlement"]]
+        if over_limit:
+            st.warning("Запланировано больше положенного: " + "; ".join(over_limit))
         no_long = [n for n in NAMES if n in submitted and not summaries[n]["has_long"]]
         if no_long:
             st.warning("Нет части от %s: %s" % (n_days(vc.MIN_LONG_PART), ", ".join(no_long)))
