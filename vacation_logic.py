@@ -38,10 +38,8 @@ def daterange(start, end):
 
 
 def vacation_days(start, end):
-    """Дней отпуска в периоде — все календарные дни, праздничные тоже входят
-    (так принято в отделении; праздники в календаре подсвечены только для
-    справки)."""
-    return (end - start).days + 1
+    """Дней отпуска в периоде: календарные дни минус праздничные (ст. 120 ТК)."""
+    return sum(1 for d in daterange(start, end) if not is_holiday(d))
 
 
 def fmt_date(d):
@@ -185,6 +183,8 @@ def validate_new_period(name, start, end, year, all_records, entitlement, rules,
     if start.year != year or end.year != year:
         return ["Отпуск должен целиком лежать в %d году." % year], []
     days = vacation_days(start, end)
+    if days == 0:
+        return ["В выбранных датах только праздничные дни — они в отпуск не входят."], []
 
     errors = []
     mine = [r for r in active(all_records) if r["name"] == name]
