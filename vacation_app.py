@@ -279,6 +279,9 @@ with tab_me:
     m3.metric("Осталось", s["entitlement"] - s["planned"])
     if vc.carryover(name):
         st.caption("Положено: %s за год + %s остатка за прошлый год." % (n_days(vc.BASE_DAYS), n_days(vc.carryover(name))))
+    if s["planned"] > s["entitlement"]:
+        st.warning("Запланировано на %s больше положенного — окончательное решение за заведующим."
+                   % n_days(s["planned"] - s["entitlement"]))
     if mine and not s["has_long"]:
         st.warning("Пока нет ни одной части отпуска от %s — она обязательна (ст. 125 ТК РФ)." % n_days(vc.MIN_LONG_PART))
 
@@ -368,7 +371,8 @@ with tab_me:
                 fmt_period_words(start, end), n_days(days),
                 " (праздничные дни не входят: %s)" % n_days(n_hol) if n_hol else ""))
             errors, warnings = validate_new_period(name, start, end, year, records, vc.entitlement(name),
-                                                   RULES, vc.MIN_LONG_PART, today=today())
+                                                   RULES, vc.MIN_LONG_PART, today=today(),
+                                            hard_limit=KIND[name] not in vc.SOFT_LIMIT_KINDS)
             for e in errors:
                 st.error(e)
             for w in warnings:
@@ -393,7 +397,8 @@ with tab_me:
             # одновременные заявки не проскочат мимо правил.
             with WRITE_LOCK:
                 errors, _ = validate_new_period(name, start, end, year, backend.list_vacations(year)[0],
-                                                vc.entitlement(name), RULES, vc.MIN_LONG_PART, today=today())
+                                                vc.entitlement(name), RULES, vc.MIN_LONG_PART, today=today(),
+                                            hard_limit=KIND[name] not in vc.SOFT_LIMIT_KINDS)
                 if not errors:
                     ts = now()
                     backend.add_vacation(new_record(name, start, end, comment.strip(), PENDING, ts))
@@ -461,6 +466,10 @@ with tab_manager:
                       for n in NAMES if n in submitted and summaries[n]["planned"] < summaries[n]["entitlement"]]
         if incomplete:
             st.info("Запланировали не все дни: " + "; ".join(incomplete))
+        over_limit = ["%s (%d из %d)" % (n, summaries[n]["planned"], summaries[n]["entitlement"])
+                      for n in NAMES if summaries[n]["planned"] > summaries[n]["entitlement"]]
+        if over_limit:
+            st.warning("Запланировано больше положенного: " + "; ".join(over_limit))
         no_long = [n for n in NAMES if n in submitted and not summaries[n]["has_long"]]
         if no_long:
             st.warning("Нет части от %s: %s" % (n_days(vc.MIN_LONG_PART), ", ".join(no_long)))

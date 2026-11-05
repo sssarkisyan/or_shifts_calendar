@@ -81,6 +81,17 @@ check(validate(me, D(Y, 7, 1), D(Y, 8, 5), []) == [], "36 дней с остат
 check(any("лимит" in e for e in validate(me, D(Y, 7, 1), D(Y, 8, 6), [])), "37 дней с остатком — блок")
 del vc.CARRYOVER_DAYS[me]
 
+# --- совместителям лимит не жёсткий: подать можно, но с предупреждением ---
+check(vc.SOFT_LIMIT_KINDS == {"совместитель"}, "мягкий лимит — у совместителей")
+e_pt, w_pt = validate_new_period(part_timer, D(Y, 7, 1), D(Y, 8, 1), Y, [], 31, RULES, 14, hard_limit=False)
+check(e_pt == [] and any("Больше положенного" in x and "32 дня" in x for x in w_pt),
+      "совместитель: 32 дня — подать можно, предупреждение «Больше положенного»")
+e_pt, _ = validate_new_period(part_timer, D(Y, 9, 1), D(Y, 9, 5), Y,
+                              [rec(part_timer, D(Y, 3, 1), D(Y, 3, 10)), rec(part_timer, D(Y, 5, 4), D(Y, 5, 18))],
+                              31, RULES, 14, hard_limit=False)
+check(e_pt == [], "совместитель: короткие части без части ≥14 не блокируются")
+check(any("лимит" in x for x in validate(me, D(Y, 7, 1), D(Y, 8, 1), [])), "основному 32 дня — по-прежнему блок")
+
 # --- часть ≥14 дней и свои пересечения ---
 existing = [rec(me, D(Y, 3, 1), D(Y, 3, 10))]
 check(any("ст. 125" in e for e in validate(me, D(Y, 7, 1), D(Y, 7, 10), existing)),
@@ -317,6 +328,22 @@ check(editor_updates(orig, edit) == {"b": {"status": REJECTED, "manager_comment"
 edit2 = orig.copy()
 edit2.at["a", "Комментарий заведующего"] = None
 check(editor_updates(orig, edit2) == {}, "очищенная пустая ячейка не считается изменением")
+
+# --- совместитель подаёт больше 31 дня через интерфейс ---
+as_employee(part_timer)
+pick(D(Y, 2, 1), D(Y, 3, 15))
+check(any("Больше положенного" in w.value for w in at.warning), "совместитель видит предупреждение о превышении")
+confirm()
+check(not submit_btn().disabled, "кнопка «Подать» активна при превышении у совместителя")
+submit_btn().click().run()
+pt_days = sum(r["days"] for r in backend.list_vacations(Y)[0] if r["name"] == part_timer)
+check(pt_days > 31, "заявка совместителя сверх 31 дня сохранена")
+check(any("больше положенного" in w.value for w in at.warning), "после подачи — предупреждение в сводке сотрудника")
+refresh()
+check(any("Запланировано больше положенного" in w.value and part_timer in w.value for w in at.warning),
+      "заведующий видит превышение у совместителя")
+backend._write([r for r in backend._read() if not (r["ФИО"] == part_timer and r["Начало"] == "%d-02-01" % Y)])
+refresh()
 
 # --- прошедшие даты, падежи ---
 from vacation_logic import n_doctors_gen

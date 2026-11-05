@@ -171,11 +171,15 @@ def approved(records):
     return [r for r in records if r["status"] == APPROVED]
 
 
-def validate_new_period(name, start, end, year, all_records, entitlement, rules, min_long_part, today=None):
+def validate_new_period(name, start, end, year, all_records, entitlement, rules, min_long_part, today=None,
+                        hard_limit=True):
     """(ошибки, предупреждения). Ошибки блокируют подачу: свои правила (лимит
     дней, часть ≥14, пересечение со своим периодом) и конфликт с ОДОБРЕННЫМИ
     отпусками коллег. Предупреждения — конфликт с поданными заявками коллег:
-    подать можно, решение за заведующим. today — нельзя подать на прошедшие даты."""
+    подать можно, решение за заведующим. today — нельзя подать на прошедшие даты.
+    hard_limit=False (совместители) — превышение лимита дней не блокирует, а
+    только предупреждает; правило «часть ≥14» при подаче тогда не проверяется
+    (без лимита длинную часть всегда можно добавить позже)."""
     if start > end:
         return ["Дата окончания раньше даты начала."], []
     if today is not None and start < today:
@@ -193,12 +197,19 @@ def validate_new_period(name, start, end, year, all_records, entitlement, rules,
             errors.append("Пересекается с вашим отпуском %s." % fmt_period(r["start"], r["end"]))
 
     used = sum(r["days"] for r in mine)
+    soft = []
     if used + days > entitlement:
-        errors.append(
-            "Превышен лимит: положено %s, уже запланировано %s, в этом отпуске %s (осталось %s)."
-            % (n_days(entitlement), n_days(used), n_days(days), n_days(max(entitlement - used, 0)))
-        )
-    else:
+        if hard_limit:
+            errors.append(
+                "Превышен лимит: положено %s, уже запланировано %s, в этом отпуске %s (осталось %s)."
+                % (n_days(entitlement), n_days(used), n_days(days), n_days(max(entitlement - used, 0)))
+            )
+        else:
+            soft.append(
+                "Больше положенного: положено %s, с этим отпуском будет %s. Подать можно — "
+                "решение примет заведующий." % (n_days(entitlement), n_days(used + days))
+            )
+    elif hard_limit:
         has_long = any(r["days"] >= min_long_part for r in mine)
         remaining_after = entitlement - used - days
         if not has_long and days < min_long_part and remaining_after < min_long_part:
@@ -211,7 +222,7 @@ def validate_new_period(name, start, end, year, all_records, entitlement, rules,
 
     errors += ["Даты недоступны: " + c + " (отпуска коллег уже одобрены)."
                for c in team_conflicts(name, start, end, approved(all_records), rules)]
-    warnings = [] if errors else [
+    warnings = [] if errors else soft + [
         "На эти даты уже поданы заявки: " + c + ". Подать можно — решение примет заведующий."
         for c in team_conflicts(name, start, end, active(all_records), rules, all_approved=False)
     ]
