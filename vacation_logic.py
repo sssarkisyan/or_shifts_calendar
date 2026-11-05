@@ -6,7 +6,6 @@ import datetime
 import functools
 import io
 
-import holidays as holidays_lib
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -20,10 +19,22 @@ MONTH_NAMES = ["Январь", "Февраль", "Март", "Апрель", "М
 DOW_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
+# Нерабочие праздничные дни по ст. 112 ТК РФ (месяц, день). Список задан явно,
+# а не берётся из библиотеки holidays: разные её версии по-разному относятся
+# к переносам, и на сервере портал начинал не считать в отпуск перенесённые
+# выходные (3 и 10 мая, 14 июня, 5 ноября 2027). По ст. 120 ТК из отпуска
+# исключаются только праздничные дни; перенесённый выходной — обычный выходной
+# и в отпуск входит.
+RU_HOLIDAYS_MD = (
+    (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
+    (2, 23), (3, 8), (5, 1), (5, 9), (6, 12), (11, 4),
+)
+
+
 @functools.lru_cache(maxsize=None)
 def ru_holidays(year):
     """Праздничные нерабочие дни РФ (ст. 112 ТК) — без переносов выходных."""
-    return frozenset(holidays_lib.Russia(years=year).keys())
+    return frozenset(datetime.date(year, m, d) for m, d in RU_HOLIDAYS_MD)
 
 
 def is_holiday(d):
