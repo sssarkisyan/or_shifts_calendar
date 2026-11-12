@@ -48,6 +48,35 @@ MIN_LONG_PART = 14
 SUBMISSION_DEADLINE = None
 
 
+# Состав сотрудников для портала отпусков — поправки к общему списку
+# config.py (он же используется формой пожеланий по графику, где эти
+# изменения пока не действуют).
+EXCLUDED_STAFF = {  # в портале отпусков не участвуют
+    "Ванданов Баир Кимович",
+    "Сычкин Владимир Николаевич",
+}
+STAFF_CHANGES = {  # ставка / тип на 2027 год
+    "Гавриков Александр Юрьевич": {"rate": 0.5, "kind": "совместитель"},
+    "Муравьева Елена Михайловна": {"rate": 1, "kind": "основной"},
+}
+TOP_STAFF = [  # всегда в начале списков и таблиц
+    "Саркисян Степан Сергеевич",
+    "Тимербаев Владимир Хамидович",
+]
+KIND_ORDER = ["заведующий", "профессор", "основной", "совместитель", "договор"]
+
+
+def vacation_staff(staff):
+    """Список сотрудников портала: config.STAFF с поправками выше. Порядок:
+    TOP_STAFF, затем основные, совместители, договорники (внутри — как в config.py)."""
+    out = [dict(s, **STAFF_CHANGES.get(s["name"], {})) for s in staff if s["name"] not in EXCLUDED_STAFF]
+    top = {n: i for i, n in enumerate(TOP_STAFF)}
+    kind_rank = {k: i for i, k in enumerate(KIND_ORDER)}
+    pos = {s["name"]: i for i, s in enumerate(out)}
+    return sorted(out, key=lambda s: (0, top[s["name"]]) if s["name"] in top
+                  else (1, kind_rank.get(s["kind"], len(KIND_ORDER)), pos[s["name"]]))
+
+
 def carryover(name):
     return CARRYOVER_DAYS.get(name, 0)
 

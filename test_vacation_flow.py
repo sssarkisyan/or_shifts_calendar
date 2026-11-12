@@ -37,7 +37,8 @@ def check(cond, msg):
 
 D = datetime.date
 Y = vc.PLAN_YEAR
-names = [s["name"] for s in config.STAFF]
+STAFF_V = vc.vacation_staff(config.STAFF)  # тот же состав, что у портала
+names = [s["name"] for s in STAFF_V]
 me = names[3]
 
 # --- подсчёт дней ---
@@ -64,9 +65,9 @@ def rec(name, a, b, status=PENDING):
     return new_record(name, a, b, "", status, "t")
 
 
-MAIN = frozenset(st["name"] for st in config.STAFF if st["kind"] in vc.OVERLAP_KINDS)
+MAIN = frozenset(st["name"] for st in STAFF_V if st["kind"] in vc.OVERLAP_KINDS)
 RULES = TeamRules(MAIN, vc.MAX_OVERLAP_DAYS, vc.MAX_CONCURRENT_MAIN)
-part_timer = [st["name"] for st in config.STAFF if st["kind"] == "совместитель"][0]
+part_timer = [st["name"] for st in STAFF_V if st["kind"] == "совместитель"][0]
 colleague, colleague2, colleague3, colleague4 = names[4], names[5], names[6], names[7]
 check({me, colleague, colleague2, colleague3, colleague4} <= MAIN and part_timer not in MAIN,
       "sanity: пятеро основных и совместитель")
@@ -84,6 +85,15 @@ def validate(*args, **kw):
 def warn(*args, **kw):
     return check_all(*args, **kw)[1]
 
+
+# --- состав портала ---
+check(names[:2] == ["Саркисян Степан Сергеевич", "Тимербаев Владимир Хамидович"], "заведующий и профессор — первыми")
+check("Ванданов Баир Кимович" not in names and "Сычкин Владимир Николаевич" not in names, "Ванданов и Сычкин в портале не участвуют")
+_k = {x["name"]: (x["kind"], x["rate"]) for x in STAFF_V}
+check(_k["Муравьева Елена Михайловна"] == ("основной", 1) and _k["Гавриков Александр Юрьевич"] == ("совместитель", 0.5),
+      "Муравьева — основной на 1 ставку, Гавриков — совместитель на 0,5")
+check(max(i for i, n in enumerate(names) if _k[n][0] == "основной") < min(i for i, n in enumerate(names) if _k[n][0] == "совместитель"),
+      "все основные (вкл. Муравьеву) — выше совместителей")
 
 # --- лимит дней: 31 + остаток ---
 check(vc.entitlement(me) == 31, "положено 31 день по умолчанию")
@@ -292,8 +302,8 @@ check('"c": "vc-full' not in calendar_html() and not json.loads(calendar_html())
       "у совместителя недоступных дней нет")
 
 # заведующий и профессор видят заявки друг друга; основные их не видят, лимиты не задеты
-prof = [x["name"] for x in config.STAFF if x["kind"] == "профессор"][0]
-head = [x["name"] for x in config.STAFF if x["kind"] == "заведующий"][0]
+prof = [x["name"] for x in STAFF_V if x["kind"] == "профессор"][0]
+head = [x["name"] for x in STAFF_V if x["kind"] == "заведующий"][0]
 backend.add_vacation(rec(prof, D(Y, 3, 1), D(Y, 3, 14)))
 refresh()
 as_employee(head)
@@ -390,7 +400,7 @@ refresh()
 
 # --- Excel ---
 recs = backend.list_vacations(Y)[0]
-xlsx = build_excel(Y, config.STAFF, recs, vc.entitlement, RULES, vc.MIN_LONG_PART)
+xlsx = build_excel(Y, STAFF_V, recs, vc.entitlement, RULES, vc.MIN_LONG_PART)
 wb = load_workbook(io.BytesIO(xlsx))
 check(wb.sheetnames[0] == "Свод" and "Июль" in wb.sheetnames and "Заявки" in wb.sheetnames, "листы Excel")
 check(wb.sheetnames[1:3] == ["Год по месяцам", "Год по дням"], "обзорные листы года — сразу после «Свода»")
@@ -403,7 +413,7 @@ jul1 = 3 + (D(Y, 7, 1) - D(Y, 1, 1)).days
 check(yd.cell(row_me, jul1).fill.fgColor.rgb.endswith("CDEBD3"), "«Год по дням»: одобренный отпуск 1 июля — зелёный")
 may3 = 3 + (D(Y, 5, 3) - D(Y, 1, 1)).days
 feb20 = 3 + (D(Y, 2, 20) - D(Y, 1, 1)).days
-emp_row = [r for r in range(1, yd.max_row + 1) if yd.cell(r, 1).value == "Сычкин В.Н."][0]
+emp_row = [r for r in range(1, yd.max_row + 1) if yd.cell(r, 1).value == "Волков В.Г."][0]
 check(yd.cell(emp_row, may3).fill.fgColor.rgb.endswith("F2F2F2"), "«Год по дням»: 3 мая — выходной (перенос)")
 check(yd.cell(emp_row, feb20).fill.fill_type is None, "«Год по дням»: 20 февраля — рабочая суббота, не закрашена")
 svod_header = [c.value for c in wb["Свод"][1]]

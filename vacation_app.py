@@ -24,7 +24,7 @@ from vacation_logic import (
 
 st.set_page_config(page_title="График отпусков | Врачи", page_icon="🏖️", layout="centered")
 
-STAFF = config.STAFF
+STAFF = vc.vacation_staff(config.STAFF)  # с поправками портала (см. vacation_config.py)
 NAMES = [s["name"] for s in STAFF]
 KIND = {s["name"]: s["kind"] for s in STAFF}
 # Правила пересечения отпусков основных сотрудников (совместители не ограничены).
