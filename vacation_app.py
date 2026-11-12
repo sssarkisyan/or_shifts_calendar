@@ -18,7 +18,7 @@ from vacation_backend import BACKEND_NAME, WRITE_LOCK, backend, new_log, new_rec
 from vacation_logic import (
     APPROVED, DOW_RU, MONTH_NAMES, PENDING, REJECTED, STATUS_LABELS, TeamRules,
     active, approved, approved_violations, bad_days, build_excel, collapse_dates, daterange, editor_updates,
-    fmt_date, fmt_date_words, fmt_period, fmt_period_words, fmt_ranges, is_holiday, n_days, n_doctors, n_doctors_gen, person_summary, record_conflicts, team_calendar,
+    fmt_date, fmt_date_words, fmt_period, fmt_period_words, fmt_ranges, is_day_off, is_holiday, n_days, n_doctors, n_doctors_gen, person_summary, record_conflicts, team_calendar,
     team_conflicts, vacation_days, validate_new_period,
 )
 
@@ -177,7 +177,7 @@ def calendar_data(year, recs, full=(), bad=(), mine=(), label=lambda n: n):
             cls.append("vc-%s%d" % ("a" if all(st == APPROVED for _, st in day) else "p", min(len(day), 3)))
         if is_holiday(d):
             cls.append("vc-hol")
-        elif d.weekday() >= 5:
+        elif is_day_off(d):  # выходной или перенесённый выходной (производственный календарь)
             cls.append("vc-wk")
         if d in mine:
             cls.append("vc-mine")
@@ -594,7 +594,7 @@ with tab_manager:
         def header_style(col):
             d = dates[cols.index(col.name)]
             # как в календаре: выходные — красный шрифт, праздники — оранжевый (серый = «недоступно»)
-            base = "color:#D35400;font-weight:bold" if is_holiday(d) else "color:#C0392B" if d.weekday() >= 5 else ""
+            base = "color:#D35400;font-weight:bold" if is_holiday(d) else "color:#C0392B" if is_day_off(d) else ""
             out = []
             for row, v in zip(col.index, col):
                 if row == ROW_APPR:

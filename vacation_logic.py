@@ -41,6 +41,32 @@ def is_holiday(d):
     return d in ru_holidays(d.year)
 
 
+# Производственный календарь (переносы выходных по постановлениям
+# Правительства). Нужен только для отображения — какие дни в календарях и
+# Excel показывать выходными; на подсчёт дней отпуска не влияет (там только
+# праздники ст. 112, см. vacation_days). Год без записи — обычная неделя +
+# праздники. Добавлять новый год по consultant.ru/law/ref/calendar/proizvodstvennye/.
+PRODUCTION_CALENDAR = {
+    # Постановление Правительства РФ от 17.09.2026 № 1187 «О переносе
+    # выходных дней в 2027 году» (consultant.ru, производственный календарь 2027)
+    2027: {
+        "days_off": {(2, 22), (5, 3), (5, 10), (6, 14), (11, 5), (12, 31)},
+        "workdays": {(2, 20)},  # рабочая суббота (предпраздничная, на час короче)
+    },
+}
+
+
+def is_day_off(d):
+    """Нерабочий день по производственному календарю: выходной, праздник или
+    перенесённый выходной (рабочие субботы — рабочие)."""
+    cal = PRODUCTION_CALENDAR.get(d.year, {})
+    if (d.month, d.day) in cal.get("workdays", ()):
+        return False
+    if (d.month, d.day) in cal.get("days_off", ()) or is_holiday(d):
+        return True
+    return d.weekday() >= 5
+
+
 def daterange(start, end):
     d = start
     while d <= end:
@@ -458,7 +484,7 @@ def _add_year_sheets(wb, year, staff, records, entitlement_fn, rules):
     for i, d in enumerate(days):
         col = first_col + i
         c = ws.cell(4, col, d.day)
-        c.font = Font(size=7, bold=True, color="C0392B" if d.weekday() >= 5 or is_holiday(d) else None)
+        c.font = Font(size=7, bold=True, color="C0392B" if is_day_off(d) else None)
         c.alignment = CENTER
         c.border = Border(left=MONTH_EDGE if d.day == 1 else None, bottom=THIN)
         ws.column_dimensions[get_column_letter(col)].width = 2.6
@@ -487,7 +513,7 @@ def _add_year_sheets(wb, year, staff, records, entitlement_fn, rules):
                     c.fill = FILL_PENDING
                 elif is_holiday(d):
                     c.fill = FILL_HOLIDAY_LIGHT
-                elif d.weekday() >= 5:
+                elif is_day_off(d):
                     c.fill = FILL_WEEKEND_LIGHT
                 c.border = Border(left=MONTH_EDGE if d.day == 1 else None, bottom=THIN)
     # итоговая строка: сколько основных в отпуске в этот день
@@ -571,7 +597,7 @@ def build_excel(year, staff, records, entitlement_fn, rules, min_long_part):
                 c.alignment = CENTER
                 if is_holiday(d):
                     c.fill = FILL_HOLIDAY
-                elif d.weekday() >= 5:
+                elif is_day_off(d):
                     c.fill = FILL_WEEKEND
         for name in names:
             ws.append([name] + ["От" if (name, d) in by_day else "" for d in dates])

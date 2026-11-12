@@ -44,6 +44,16 @@ me = names[3]
 check(vacation_days(D(2027, 1, 1), D(2027, 1, 14)) == 6, "1–14 января 2027: 14 кал. дней − 8 праздников = 6")
 check(vacation_days(D(2027, 7, 1), D(2027, 7, 14)) == 14, "июль без праздников: 14 дней")
 check(vacation_days(D(2027, 6, 7), D(2027, 6, 20)) == 13, "12 июня внутри периода не считается")
+
+# --- производственный календарь 2027 (постановление № 1187, consultant.ru) ---
+from vacation_logic import is_day_off
+_days = [D(2027, 1, 1) + datetime.timedelta(i) for i in range(365)]
+check(sum(1 for d in _days if not is_day_off(d)) == 247, "2027: 247 рабочих дней (1972 ч при 40-часовой неделе)")
+check(all(is_day_off(D(2027, m, d)) for m, d in ((2, 22), (5, 3), (5, 10), (6, 14), (11, 5), (12, 31))),
+      "перенесённые выходные 2027 — нерабочие")
+check(not is_day_off(D(2027, 2, 20)), "20.02.2027 (суббота) — рабочий день")
+check(vacation_days(D(2027, 5, 1), D(2027, 5, 14)) == 12, "1–14 мая: праздники 1 и 9 мая не в счёт, перенесённые 3 и 10 мая — в счёт")
+
 check(vacation_days(D(2027, 11, 1), D(2027, 11, 7)) == 6,
       "перенесённый выходной 5 ноября в отпуск входит, не входит только 4 ноября")
 check(vacation_days(D(2027, 5, 1), D(2027, 5, 10)) == 8,
@@ -226,6 +236,8 @@ check(req["s"] == D(Y, 7, 1).isoformat() and req["e"] == D(Y, 7, 14).isoformat()
       and "заявка подана" in req["t"], "заявка для контура: даты 1–14 июля, фамилия и статус")
 check(D(Y, 7, 15).isoformat() not in cal["days"] or not cal["days"][D(Y, 7, 15).isoformat()]["r"],
       "15 июля коллег в отпуске нет")
+check("vc-wk" in cal["days"].get(D(Y, 5, 3).isoformat(), {}).get("c", ""), "календарь: 3 мая — выходной (перенос)")
+check("vc-wk" not in cal["days"].get(D(Y, 2, 20).isoformat(), {}).get("c", ""), "календарь: 20 февраля — рабочая суббота")
 legend_texts = [l[1] for l in cal["legend"]]
 check(legend_texts[0] == "мои отпуска" and "есть поданные" in legend_texts[1] and "всё одобрено" in legend_texts[2]
       and legend_texts[3].startswith("недоступно"), "порядок легенды: мои, поданные, одобренные, недоступно")
@@ -389,6 +401,11 @@ yd = wb["Год по дням"]
 row_me = [r for r in range(1, yd.max_row + 1) if yd.cell(r, 1).value == me_short][0]
 jul1 = 3 + (D(Y, 7, 1) - D(Y, 1, 1)).days
 check(yd.cell(row_me, jul1).fill.fgColor.rgb.endswith("CDEBD3"), "«Год по дням»: одобренный отпуск 1 июля — зелёный")
+may3 = 3 + (D(Y, 5, 3) - D(Y, 1, 1)).days
+feb20 = 3 + (D(Y, 2, 20) - D(Y, 1, 1)).days
+emp_row = [r for r in range(1, yd.max_row + 1) if yd.cell(r, 1).value == "Сычкин В.Н."][0]
+check(yd.cell(emp_row, may3).fill.fgColor.rgb.endswith("F2F2F2"), "«Год по дням»: 3 мая — выходной (перенос)")
+check(yd.cell(emp_row, feb20).fill.fill_type is None, "«Год по дням»: 20 февраля — рабочая суббота, не закрашена")
 svod_header = [c.value for c in wb["Свод"][1]]
 check(svod_header[:3] == ["ФИО", "Положено", "Запланировано"] and not any("Остаток" in str(h) for h in svod_header),
       "Excel «Свод»: без колонки остатка")
