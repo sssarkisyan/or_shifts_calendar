@@ -7,7 +7,7 @@ import functools
 import io
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 PENDING, APPROVED, REJECTED = "PENDING", "APPROVED", "REJECTED"
@@ -321,8 +321,197 @@ BOLD = Font(bold=True)
 CENTER = Alignment(horizontal="center", vertical="center")
 
 
+MONTH_SHORT = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
+STAFF_GROUPS = [("Основные", {"основной"}), ("Совместители", {"совместитель"}),
+                ("По договору", {"договор"}), ("Заведующий и профессор", {"заведующий", "профессор"})]
+FILL_GROUP = PatternFill("solid", fgColor="D9E1F2")
+FILL_HOLIDAY_LIGHT = PatternFill("solid", fgColor="FBE5D6")  # праздники в «Год по дням» — бледно, не забивая картину
+FILL_WEEKEND_LIGHT = PatternFill("solid", fgColor="F2F2F2")
+THIN = Side(style="thin", color="BFBFBF")
+MONTH_EDGE = Side(style="medium", color="808080")
+
+
+def short_name(full):
+    """«Исхаков Руслан Ильдарович» → «Исхаков Р.И.»"""
+    parts = full.split()
+    return parts[0] + (" " + "".join(p[0] + "." for p in parts[1:3]) if len(parts) > 1 else "")
+
+
+def _grouped_staff(staff):
+    """[(название группы, [сотрудники]), ...] в порядке STAFF_GROUPS, без пустых групп."""
+    out, seen = [], set()
+    for title, kinds in STAFF_GROUPS:
+        members = [s for s in staff if s["kind"] in kinds]
+        seen.update(s["name"] for s in members)
+        if members:
+            out.append((title, members))
+    rest = [s for s in staff if s["name"] not in seen]
+    if rest:
+        out.append(("Прочие", rest))
+    return out
+
+
+def _add_year_sheets(wb, year, staff, records, entitlement_fn, rules):
+    """Два обзорных листа на весь год: «Год по месяцам» (даты отпусков в клетке
+    месяца) и «Год по дням» (каждый день — клетка, отпуск закрашен)."""
+    act = sorted(active(records), key=lambda r: r["start"])
+    by_name = {}
+    for r in act:
+        by_name.setdefault(r["name"], []).append(r)
+    groups = _grouped_staff(staff)
+    small = Font(size=9)
+    title_font = Font(bold=True, size=14)
+    legend = "Зелёный — одобрено, розовый — на рассмотрении. Отклонённые заявки не показаны."
+
+    # --- Год по месяцам ---
+    ws = wb.create_sheet("Год по месяцам")
+    ws["A1"] = "Отпуска врачей — %d год" % year
+    ws["A1"].font = title_font
+    ws["A2"] = legend + " В клетке — числа месяца."
+    ws["A2"].font = Font(italic=True, size=9, color="595959")
+    header = ["Сотрудник", "Ставка"] + MONTH_SHORT + ["Дней", "Положено"]
+    ws.append([])
+    ws.append(header)
+    hdr_row = ws.max_row
+    for c in ws[hdr_row]:
+        c.font = BOLD
+        c.alignment = CENTER
+        c.border = Border(bottom=MONTH_EDGE)
+    month_days = [0] * 12
+    for title, members in groups:
+        ws.append([title])
+        r0 = ws.max_row
+        ws.merge_cells(start_row=r0, start_column=1, end_row=r0, end_column=len(header))
+        ws.cell(r0, 1).font = BOLD
+        ws.cell(r0, 1).fill = FILL_GROUP
+        for s in members:
+            recs = by_name.get(s["name"], [])
+            row = [short_name(s["name"]), s["rate"]]
+            fills = []
+            for m in range(1, 13):
+                parts, statuses = [], set()
+                for r in recs:
+                    a = max(r["start"], datetime.date(year, m, 1))
+                    b = min(r["end"], datetime.date(year, m, calmod.monthrange(year, m)[1]))
+                    if a <= b:
+                        parts.append(str(a.day) if a == b else "%d–%d" % (a.day, b.day))
+                        statuses.add(r["status"])
+                        month_days[m - 1] += (b - a).days + 1
+                row.append(", ".join(parts))
+                fills.append(None if not statuses else FILL_APPROVED if statuses == {APPROVED} else FILL_PENDING)
+            total = sum(r["days"] for r in recs)
+            ent = entitlement_fn(s["name"])
+            row += [total or "", ent]
+            ws.append(row)
+            rr = ws.max_row
+            for i, f in enumerate(fills):
+                c = ws.cell(rr, 3 + i)
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                c.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+                if f:
+                    c.fill = f
+            ws.cell(rr, 2).alignment = CENTER
+            dc = ws.cell(rr, 15)
+            dc.alignment = CENTER
+            dc.font = BOLD
+            if total > ent:
+                dc.fill = FILL_BAD
+            ws.cell(rr, 16).alignment = CENTER
+            ws.cell(rr, 16).font = Font(color="808080")
+    ws.append(["Всего календарных дней отпуска", ""] + [d or "" for d in month_days])
+    rr = ws.max_row
+    ws.merge_cells(start_row=rr, start_column=1, end_row=rr, end_column=2)
+    for c in ws[rr]:
+        c.font = BOLD
+        c.alignment = CENTER
+        c.border = Border(top=MONTH_EDGE)
+    ws.cell(rr, 1).alignment = Alignment(horizontal="left")
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 7
+    for i in range(12):
+        ws.column_dimensions[get_column_letter(3 + i)].width = 11
+    ws.column_dimensions[get_column_letter(15)].width = 7
+    ws.column_dimensions[get_column_letter(16)].width = 9
+    ws.freeze_panes = "C%d" % (hdr_row + 1)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    # --- Год по дням ---
+    ws = wb.create_sheet("Год по дням")
+    days = list(daterange(datetime.date(year, 1, 1), datetime.date(year, 12, 31)))
+    first_col = 3
+    ws["A1"] = "Отпуска врачей — %d год, по дням" % year
+    ws["A1"].font = title_font
+    ws["A2"] = legend + " Серым — выходные, бледно-оранжевым — праздники."
+    ws["A2"].font = Font(italic=True, size=9, color="595959")
+    # строка 3 — месяцы (объединённые), 4 — числа (выходные/праздники красным)
+    for m in range(1, 13):
+        cols = [first_col + i for i, d in enumerate(days) if d.month == m]
+        ws.merge_cells(start_row=3, start_column=cols[0], end_row=3, end_column=cols[-1])
+        c = ws.cell(3, cols[0], MONTH_NAMES[m - 1])
+        c.font = BOLD
+        c.alignment = CENTER
+    ws.cell(4, 1, "Сотрудник").font = BOLD
+    ws.cell(4, 2, "Дней").font = BOLD
+    for i, d in enumerate(days):
+        col = first_col + i
+        c = ws.cell(4, col, d.day)
+        c.font = Font(size=7, bold=True, color="C0392B" if d.weekday() >= 5 or is_holiday(d) else None)
+        c.alignment = CENTER
+        c.border = Border(left=MONTH_EDGE if d.day == 1 else None, bottom=THIN)
+        ws.column_dimensions[get_column_letter(col)].width = 2.6
+    status_by = {}
+    for r in act:
+        for d in daterange(r["start"], r["end"]):
+            status_by[(r["name"], d)] = r["status"]
+    for title, members in groups:
+        ws.append([title])
+        c = ws.cell(ws.max_row, 1)
+        c.font = BOLD
+        c.fill = FILL_GROUP
+        ws.cell(ws.max_row, 2).fill = FILL_GROUP
+        for s in members:
+            total = sum(r["days"] for r in by_name.get(s["name"], []))
+            ws.append([short_name(s["name"]), total or ""])
+            rr = ws.max_row
+            ws.cell(rr, 2).alignment = CENTER
+            ws.cell(rr, 2).font = small
+            for i, d in enumerate(days):
+                c = ws.cell(rr, first_col + i)
+                st = status_by.get((s["name"], d))
+                if st == APPROVED:
+                    c.fill = FILL_APPROVED
+                elif st == PENDING:
+                    c.fill = FILL_PENDING
+                elif is_holiday(d):
+                    c.fill = FILL_HOLIDAY_LIGHT
+                elif d.weekday() >= 5:
+                    c.fill = FILL_WEEKEND_LIGHT
+                c.border = Border(left=MONTH_EDGE if d.day == 1 else None, bottom=THIN)
+    # итоговая строка: сколько основных в отпуске в этот день
+    occ = occupancy([r for r in act if r["name"] in rules.main_names])
+    ws.append(["Основных в отпуске", ""])
+    rr = ws.max_row
+    ws.cell(rr, 1).font = BOLD
+    for i, d in enumerate(days):
+        n = len(occ.get(d, []))
+        c = ws.cell(rr, first_col + i, n or None)
+        c.font = Font(size=7, bold=True)
+        c.alignment = CENTER
+        c.border = Border(top=MONTH_EDGE, left=MONTH_EDGE if d.day == 1 else None)
+        if n > rules.max_concurrent:
+            c.fill = FILL_BAD
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 5
+    ws.freeze_panes = "%s5" % get_column_letter(first_col)
+    ws.page_setup.orientation = "landscape"
+
+
 def build_excel(year, staff, records, entitlement_fn, rules, min_long_part):
-    """Свод + 12 листов-календарей + список всех заявок. Возвращает bytes .xlsx."""
+    """Свод + год по месяцам + год по дням + 12 листов-календарей + список всех
+    заявок. Возвращает bytes .xlsx."""
     wb = Workbook()
     names = [s["name"] for s in staff]
 
@@ -359,6 +548,8 @@ def build_excel(year, staff, records, entitlement_fn, rules, min_long_part):
                          FILL_BAD)]:
         ws.append([label])
         ws.cell(ws.max_row, 1).fill = fill
+
+    _add_year_sheets(wb, year, staff, records, entitlement_fn, rules)
 
     # --- Календари по месяцам ---
     by_day = {}

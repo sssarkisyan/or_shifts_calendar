@@ -381,6 +381,14 @@ recs = backend.list_vacations(Y)[0]
 xlsx = build_excel(Y, config.STAFF, recs, vc.entitlement, RULES, vc.MIN_LONG_PART)
 wb = load_workbook(io.BytesIO(xlsx))
 check(wb.sheetnames[0] == "Свод" and "Июль" in wb.sheetnames and "Заявки" in wb.sheetnames, "листы Excel")
+check(wb.sheetnames[1:3] == ["Год по месяцам", "Год по дням"], "обзорные листы года — сразу после «Свода»")
+ym = {r[0]: r for r in wb["Год по месяцам"].iter_rows(values_only=True) if r and r[0]}
+me_short = me.split()[0] + " " + me.split()[1][0] + "." + me.split()[2][0] + "."
+check(ym[me_short][2 + 6] == "1–14", "«Год по месяцам»: у сотрудника в июле «1–14»")
+yd = wb["Год по дням"]
+row_me = [r for r in range(1, yd.max_row + 1) if yd.cell(r, 1).value == me_short][0]
+jul1 = 3 + (D(Y, 7, 1) - D(Y, 1, 1)).days
+check(yd.cell(row_me, jul1).fill.fgColor.rgb.endswith("CDEBD3"), "«Год по дням»: одобренный отпуск 1 июля — зелёный")
 svod_header = [c.value for c in wb["Свод"][1]]
 check(svod_header[:3] == ["ФИО", "Положено", "Запланировано"] and not any("Остаток" in str(h) for h in svod_header),
       "Excel «Свод»: без колонки остатка")
