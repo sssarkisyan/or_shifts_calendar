@@ -416,6 +416,11 @@ feb20 = 3 + (D(Y, 2, 20) - D(Y, 1, 1)).days
 emp_row = [r for r in range(1, yd.max_row + 1) if yd.cell(r, 1).value == "Волков В.Г."][0]
 check(yd.cell(emp_row, may3).fill.fgColor.rgb.endswith("F2F2F2"), "«Год по дням»: 3 мая — выходной (перенос)")
 check(yd.cell(emp_row, feb20).fill.fill_type is None, "«Год по дням»: 20 февраля — рабочая суббота, не закрашена")
+grp_rows = [r for r in range(1, yd.max_row + 1) if yd.cell(r, 1).value in ("Основные", "Совместители")]
+check(len(grp_rows) == 2 and all(yd.cell(r, yd.max_column).fill.fgColor.rgb.endswith("D9E1F2") for r in grp_rows),
+      "«Год по дням»: строки групп залиты на всю ширину года")
+check(not any(yd.cell(r, 1).value == "Основных в отпуске" for r in range(1, yd.max_row + 1)),
+      "«Год по дням»: итоговой строки «Основных в отпуске» нет")
 svod_header = [c.value for c in wb["Свод"][1]]
 check(svod_header[:3] == ["ФИО", "Положено", "Запланировано"] and not any("Остаток" in str(h) for h in svod_header),
       "Excel «Свод»: без колонки остатка")

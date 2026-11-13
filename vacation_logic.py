@@ -492,12 +492,17 @@ def _add_year_sheets(wb, year, staff, records, entitlement_fn, rules):
     for r in act:
         for d in daterange(r["start"], r["end"]):
             status_by[(r["name"], d)] = r["status"]
+    last_col = first_col + len(days) - 1
     for title, members in groups:
+        # строка группы — цветная полоса на всю ширину года (без объединения
+        # ячеек: объединённая строка поперёк закреплённых столбцов прокручивается криво)
         ws.append([title])
-        c = ws.cell(ws.max_row, 1)
-        c.font = BOLD
-        c.fill = FILL_GROUP
-        ws.cell(ws.max_row, 2).fill = FILL_GROUP
+        rr = ws.max_row
+        for col in range(1, last_col + 1):
+            c = ws.cell(rr, col)
+            c.fill = FILL_GROUP
+            c.border = Border(top=THIN, bottom=THIN)
+        ws.cell(rr, 1).font = BOLD
         for s in members:
             total = sum(r["days"] for r in by_name.get(s["name"], []))
             ws.append([short_name(s["name"]), total or ""])
@@ -516,20 +521,7 @@ def _add_year_sheets(wb, year, staff, records, entitlement_fn, rules):
                 elif is_day_off(d):
                     c.fill = FILL_WEEKEND_LIGHT
                 c.border = Border(left=MONTH_EDGE if d.day == 1 else None, bottom=THIN)
-    # итоговая строка: сколько основных в отпуске в этот день
-    occ = occupancy([r for r in act if r["name"] in rules.main_names])
-    ws.append(["Основных в отпуске", ""])
-    rr = ws.max_row
-    ws.cell(rr, 1).font = BOLD
-    for i, d in enumerate(days):
-        n = len(occ.get(d, []))
-        c = ws.cell(rr, first_col + i, n or None)
-        c.font = Font(size=7, bold=True)
-        c.alignment = CENTER
-        c.border = Border(top=MONTH_EDGE, left=MONTH_EDGE if d.day == 1 else None)
-        if n > rules.max_concurrent:
-            c.fill = FILL_BAD
-    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["A"].width = 24
     ws.column_dimensions["B"].width = 5
     ws.freeze_panes = "%s5" % get_column_letter(first_col)
     ws.page_setup.orientation = "landscape"
